@@ -1,0 +1,21 @@
+{
+  "id": "cs-ecdsa",
+  "title": "ECDSA in .NET",
+  "extensions": [
+    ".cs"
+  ],
+  "pattern": "\\bECDsa\\.Create\\s*\\(|\\bnew\\s+ECDsaCng\\s*\\(",
+  "algorithm": "ECDSA",
+  "examples": {
+    "match": [
+      "using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);"
+    ],
+    "noMatch": [
+      "using var ecdh = ECDiffieHellman.Create();"
+    ]
+  },
+  "references": [
+    "https://learn.microsoft.com/dotnet/api/system.security.cryptography.ecdsa"
+  ],
+  "author": "Hard Keel"
+}

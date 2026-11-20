@@ -1,0 +1,4 @@
+node_modules/
+*.sarif
+*.cbom.json
+quantum-scan-report.md

@@ -1,0 +1,30 @@
+{
+  "id": "swift-cryptokit-nist",
+  "title": "P-256, P-384 or P-521 with CryptoKit",
+  "extensions": [
+    ".swift"
+  ],
+  "pattern": "\\bP(?:256|384|521)\\.(Signing|KeyAgreement)\\b",
+  "algorithm": {
+    "groups": [
+      1
+    ],
+    "map": {
+      "signing": "ECDSA",
+      "keyagreement": "ECDH"
+    }
+  },
+  "examples": {
+    "match": [
+      "let key = P256.Signing.PrivateKey()",
+      "let k = P384.KeyAgreement.PrivateKey()"
+    ],
+    "noMatch": [
+      "let key = MLDSA65.PrivateKey()"
+    ]
+  },
+  "references": [
+    "https://developer.apple.com/documentation/cryptokit/p256"
+  ],
+  "author": "Hard Keel"
+}

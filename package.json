@@ -1,0 +1,52 @@
+{
+  "name": "@hardkeel/quantum-scan",
+  "version": "0.2.0",
+  "description": "Finds encryption quantum computers will break, weak encryption, exposed infrastructure settings and leaked keys in code and infrastructure config. Writes an encryption inventory (CycloneDX CBOM) and a migration plan.",
+  "license": "Apache-2.0",
+  "author": "Hard Keel (https://hardkeel.com)",
+  "homepage": "https://hardkeel.com",
+  "keywords": [
+    "post-quantum",
+    "pqc",
+    "cbom",
+    "cyclonedx",
+    "encryption",
+    "secrets",
+    "sarif",
+    "security",
+    "terraform",
+    "kubernetes",
+    "cloudformation",
+    "tls"
+  ],
+  "type": "module",
+  "bin": {
+    "quantum-scan": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "rules": "node scripts/build-rules.mjs",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hard-Keel/quantum-scan-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Hard-Keel/quantum-scan-cli/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.0"
+  }
+}

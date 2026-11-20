@@ -1,0 +1,32 @@
+{
+  "id": "php-weak-hash",
+  "title": "MD5 or SHA-1 of a variable in PHP",
+  "extensions": [
+    ".php"
+  ],
+  "pattern": "\\b(md5|sha1)\\s*\\(\\s*\\$|\\bhash\\s*\\(\\s*['\\\"](md5|sha1)['\\\"]",
+  "algorithm": {
+    "groups": [
+      1,
+      2
+    ],
+    "map": {
+      "md5": "MD5",
+      "sha1": "SHA-1"
+    }
+  },
+  "examples": {
+    "match": [
+      "$hash = md5($password);",
+      "$h = hash('sha1', $token);"
+    ],
+    "noMatch": [
+      "$h = hash('sha256', $data);",
+      "$etag = md5_file($path);"
+    ]
+  },
+  "references": [
+    "https://www.php.net/manual/en/function.md5.php"
+  ],
+  "author": "Hard Keel"
+}

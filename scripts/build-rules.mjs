@@ -1,0 +1,113 @@
+// Checks every community rule in rules/community/*.json and bundles them into src/community-rules.ts.
+// Usage: node scripts/build-rules.mjs          check and write
+//        node scripts/build-rules.mjs --check  check only; fail if src/community-rules.ts is out of date (CI)
+
+import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { ALGORITHMS, CRYPTO_RULES } from "../src/rules.ts";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const dir = join(root, "rules", "community");
+const out = join(root, "src", "community-rules.ts");
+
+const ALLOWED = new Set(["id", "title", "extensions", "pattern", "flags", "algorithm", "keySize", "examples", "references", "author"]);
+const BUNDLED = ["id", "title", "extensions", "pattern", "flags", "algorithm", "keySize"];
+
+/** Returns a list of problems with one rule; empty means it is good. */
+export function checkRule(r, file, seen) {
+  const p = [];
+  const bad = (msg) => p.push(`${file}: ${msg}`);
+  for (const k of Object.keys(r)) if (!ALLOWED.has(k)) bad(`unknown field "${k}"`);
+  if (typeof r.id !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)+$/.test(r.id)) bad(`id must be lowercase words joined by hyphens, like "rust-rsa-crate"`);
+  else if (`${r.id}.json` !== file) bad(`file name must be ${r.id}.json`);
+  else if (seen.has(r.id)) bad(`id "${r.id}" is already used`);
+  if (typeof r.title !== "string" || r.title.length < 10 || r.title.length > 80) bad("title must be 10 to 80 characters");
+  if (!Array.isArray(r.extensions) || !r.extensions.length || r.extensions.some((e) => typeof e !== "string" || !/^\.[a-z0-9]+$/i.test(e))) bad('extensions must be a list like [".rs"]');
+  if (r.flags !== undefined && r.flags !== "i") bad('flags may only be "i"');
+  let re;
+  try {
+    re = new RegExp(r.pattern, r.flags ?? "");
+  } catch (e) {
+    bad(`pattern does not compile: ${e.message}`);
+  }
+  // A nested repeat like (a+)+ can hang on a long line.
+  if (typeof r.pattern === "string" && /\([^()]*[+*][^()]*\)[+*{]/.test(r.pattern)) bad("pattern has a nested repeat, which can be very slow; simplify it");
+  if (r.keySize !== undefined) {
+    try {
+      new RegExp(r.keySize);
+    } catch (e) {
+      bad(`keySize does not compile: ${e.message}`);
+    }
+  }
+  const algs = typeof r.algorithm === "string" ? [r.algorithm] : r.algorithm && typeof r.algorithm === "object" ? Object.values(r.algorithm.map ?? {}) : [];
+  if (!algs.length) bad('algorithm must be a name, or { "groups": [1], "map": { "md5": "MD5" } }');
+  for (const a of algs) if (!ALGORITHMS[a]) bad(`unknown algorithm "${a}". Known: ${Object.keys(ALGORITHMS).join(", ")}`);
+  if (typeof r.algorithm === "object" && r.algorithm) {
+    if (!Array.isArray(r.algorithm.groups) || !r.algorithm.groups.every((g) => Number.isInteger(g) && g > 0)) bad("algorithm.groups must be a list of group numbers");
+    if (Object.keys(r.algorithm.map ?? {}).some((k) => k !== k.toLowerCase())) bad("algorithm.map keys must be lowercase");
+  }
+  const ex = r.examples ?? {};
+  if (!Array.isArray(ex.match) || !ex.match.length) bad("examples.match needs at least one line the rule must find");
+  if (!Array.isArray(ex.noMatch) || !ex.noMatch.length) bad("examples.noMatch needs at least one look-alike line the rule must not find");
+  if (!Array.isArray(r.references) || !r.references.length || r.references.some((u) => !/^https:\/\//.test(u))) bad("references must list at least one https link to the API's documentation");
+  if (typeof r.author !== "string" || !r.author.trim()) bad("author is required");
+  if (re) {
+    for (const line of ex.match ?? []) {
+      const m = line.match(re);
+      if (!m) bad(`does not match its own example: ${line}`);
+      else if (typeof r.algorithm === "object") {
+        const g = r.algorithm.groups.find((n) => m[n] !== undefined);
+        if (g === undefined || !r.algorithm.map[m[g].toLowerCase()]) bad(`example matches but maps to no algorithm: ${line}`);
+      }
+    }
+    for (const line of ex.noMatch ?? []) if (re.test(line)) bad(`matches a line it should not: ${line}`);
+  }
+  return p;
+}
+
+export function loadRules() {
+  const seen = new Set(CRYPTO_RULES.map((r) => r.id));
+  const problems = [];
+  const rules = [];
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
+    let r;
+    try {
+      r = JSON.parse(readFileSync(join(dir, file), "utf8"));
+    } catch (e) {
+      problems.push(`${file}: not valid JSON: ${e.message}`);
+      continue;
+    }
+    const p = checkRule(r, file, seen);
+    problems.push(...p);
+    if (!p.length) {
+      seen.add(r.id);
+      rules.push(r);
+    }
+  }
+  return { rules, problems };
+}
+
+export function render(rules) {
+  const body = rules.map((r) => JSON.stringify(Object.fromEntries(BUNDLED.filter((k) => r[k] !== undefined).map((k) => [k, r[k]])))).join(",\n  ");
+  return `// Generated by scripts/build-rules.mjs from rules/community/*.json. Do not edit by hand.\n\nimport type { CommunityRuleSpec } from "./community.ts";\n\nexport const COMMUNITY_RULES: CommunityRuleSpec[] = [\n  ${body},\n];\n`;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { rules, problems } = loadRules();
+  if (problems.length) {
+    console.error(problems.join("\n"));
+    process.exit(1);
+  }
+  const text = render(rules);
+  if (process.argv.includes("--check")) {
+    if (!existsSync(out) || readFileSync(out, "utf8") !== text) {
+      console.error("src/community-rules.ts is out of date. Run: node scripts/build-rules.mjs");
+      process.exit(1);
+    }
+    console.log(`${rules.length} community rules OK.`);
+  } else {
+    writeFileSync(out, text);
+    console.log(`${rules.length} community rules checked and written to src/community-rules.ts.`);
+  }
+}

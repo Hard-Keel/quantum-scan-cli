@@ -1,0 +1,26 @@
+{
+  "id": "c-openssl-ecb",
+  "title": "AES in ECB mode with OpenSSL in C or C++",
+  "extensions": [
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hpp"
+  ],
+  "pattern": "\\bEVP_aes_\\d+_ecb\\s*\\(",
+  "algorithm": "ECB mode",
+  "examples": {
+    "match": [
+      "EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, key, NULL);"
+    ],
+    "noMatch": [
+      "EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, key, iv);"
+    ]
+  },
+  "references": [
+    "https://docs.openssl.org/3.5/man3/EVP_aes_128_gcm/"
+  ],
+  "author": "Hard Keel"
+}

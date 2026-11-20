@@ -1,0 +1,30 @@
+name: False positive
+description: The scanner flagged something that is not a problem
+labels: [false-positive]
+body:
+  - type: input
+    id: rule
+    attributes:
+      label: Rule id or finding
+      description: From the output, like "weak-now/md5-hash" or "Hardcoded secret".
+    validations:
+      required: true
+  - type: textarea
+    id: line
+    attributes:
+      label: The line it flagged
+      description: Remove any real key or password first.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: file
+    attributes:
+      label: File type and path pattern
+      description: Like "Python, under src/" or "Terraform module".
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it is not a problem
+    validations:
+      required: true

@@ -1,0 +1,21 @@
+{
+  "id": "rust-ring-ed25519",
+  "title": "Ed25519 signing keys with ring",
+  "extensions": [
+    ".rs"
+  ],
+  "pattern": "\\bEd25519KeyPair::(?:generate_pkcs8|from_pkcs8)\\s*\\(",
+  "algorithm": "Ed25519",
+  "examples": {
+    "match": [
+      "let kp = Ed25519KeyPair::from_pkcs8(doc.as_ref())?;"
+    ],
+    "noMatch": [
+      "let pkcs8 = EcdsaKeyPair::generate_pkcs8(&alg, &rng)?;"
+    ]
+  },
+  "references": [
+    "https://docs.rs/ring/latest/ring/signature/index.html"
+  ],
+  "author": "Hard Keel"
+}

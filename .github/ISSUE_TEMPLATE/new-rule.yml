@@ -1,0 +1,30 @@
+name: Detection rule request
+description: Encryption the scanner misses
+labels: [rule-request]
+body:
+  - type: input
+    id: language
+    attributes:
+      label: Language and library
+      description: Like "Rust, ring" or "C#, System.Security.Cryptography".
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: A line of code it should find
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Link to the API's documentation
+    validations:
+      required: true
+  - type: checkboxes
+    id: pr
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to write this rule myself (see rules/README.md)

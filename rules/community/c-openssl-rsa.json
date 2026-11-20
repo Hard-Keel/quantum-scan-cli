@@ -1,0 +1,28 @@
+{
+  "id": "c-openssl-rsa",
+  "title": "RSA with OpenSSL in C or C++",
+  "extensions": [
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hpp"
+  ],
+  "pattern": "\\bRSA_generate_key(?:_ex)?\\s*\\(|\\bEVP_PKEY_RSA\\b|\\bEVP_RSA_gen\\s*\\(",
+  "algorithm": "RSA",
+  "keySize": "(?:RSA_generate_key(?:_ex)?\\s*\\([^,]+,|EVP_RSA_gen\\s*\\()\\s*(\\d{3,5})",
+  "examples": {
+    "match": [
+      "RSA_generate_key_ex(rsa, 2048, e, NULL);",
+      "ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);"
+    ],
+    "noMatch": [
+      "ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ML_DSA_65, NULL);"
+    ]
+  },
+  "references": [
+    "https://docs.openssl.org/3.5/man3/EVP_PKEY_CTX_new/"
+  ],
+  "author": "Hard Keel"
+}

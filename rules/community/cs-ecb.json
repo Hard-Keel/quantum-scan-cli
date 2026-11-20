@@ -1,0 +1,21 @@
+{
+  "id": "cs-ecb",
+  "title": "ECB mode in .NET",
+  "extensions": [
+    ".cs"
+  ],
+  "pattern": "\\bCipherMode\\.ECB\\b",
+  "algorithm": "ECB mode",
+  "examples": {
+    "match": [
+      "aes.Mode = CipherMode.ECB;"
+    ],
+    "noMatch": [
+      "aes.Mode = CipherMode.CBC;"
+    ]
+  },
+  "references": [
+    "https://learn.microsoft.com/dotnet/api/system.security.cryptography.ciphermode"
+  ],
+  "author": "Hard Keel"
+}

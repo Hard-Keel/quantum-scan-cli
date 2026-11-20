@@ -1,0 +1,32 @@
+{
+  "id": "cs-weak-hash",
+  "title": "MD5 or SHA-1 in .NET",
+  "extensions": [
+    ".cs"
+  ],
+  "pattern": "\\b(MD5|SHA1)\\.(?:Create|HashData)\\s*\\(|\\bnew\\s+(MD5|SHA1)(?:CryptoServiceProvider|Managed)\\s*\\(",
+  "algorithm": {
+    "groups": [
+      1,
+      2
+    ],
+    "map": {
+      "md5": "MD5",
+      "sha1": "SHA-1"
+    }
+  },
+  "examples": {
+    "match": [
+      "using var md5 = MD5.Create(); // hashes the password",
+      "var h = SHA1.HashData(bytes); // signature",
+      "var s = new SHA1Managed(); // token check"
+    ],
+    "noMatch": [
+      "var h = SHA256.HashData(bytes);"
+    ]
+  },
+  "references": [
+    "https://learn.microsoft.com/dotnet/api/system.security.cryptography.md5"
+  ],
+  "author": "Hard Keel"
+}

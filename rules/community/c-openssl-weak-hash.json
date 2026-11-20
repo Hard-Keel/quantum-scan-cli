@@ -1,0 +1,36 @@
+{
+  "id": "c-openssl-weak-hash",
+  "title": "MD5 or SHA-1 with OpenSSL in C or C++",
+  "extensions": [
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hpp"
+  ],
+  "pattern": "\\bEVP_(md5|sha1)\\s*\\(\\s*\\)|\\b(MD5|SHA1)_Init\\s*\\(",
+  "algorithm": {
+    "groups": [
+      1,
+      2
+    ],
+    "map": {
+      "md5": "MD5",
+      "sha1": "SHA-1"
+    }
+  },
+  "examples": {
+    "match": [
+      "EVP_DigestInit_ex(ctx, EVP_md5(), NULL); /* password hash */",
+      "SHA1_Init(&token_ctx);"
+    ],
+    "noMatch": [
+      "EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);"
+    ]
+  },
+  "references": [
+    "https://docs.openssl.org/3.5/man3/EVP_md5/"
+  ],
+  "author": "Hard Keel"
+}

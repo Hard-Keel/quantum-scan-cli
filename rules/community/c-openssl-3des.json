@@ -1,0 +1,26 @@
+{
+  "id": "c-openssl-3des",
+  "title": "3DES with OpenSSL in C or C++",
+  "extensions": [
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hpp"
+  ],
+  "pattern": "\\bEVP_des_ede3?_\\w+\\s*\\(",
+  "algorithm": "3DES",
+  "examples": {
+    "match": [
+      "EVP_EncryptInit_ex(ctx, EVP_des_ede3_cbc(), NULL, key, iv);"
+    ],
+    "noMatch": [
+      "EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, key, iv);"
+    ]
+  },
+  "references": [
+    "https://docs.openssl.org/3.5/man3/EVP_des_cbc/"
+  ],
+  "author": "Hard Keel"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "rust-ring-ecdsa",
+  "title": "ECDSA signing keys with ring",
+  "extensions": [
+    ".rs"
+  ],
+  "pattern": "\\bEcdsaKeyPair::(?:generate_pkcs8|from_pkcs8)\\s*\\(",
+  "algorithm": "ECDSA",
+  "examples": {
+    "match": [
+      "let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)?;"
+    ],
+    "noMatch": [
+      "let kp = Ed25519KeyPair::from_pkcs8(doc.as_ref())?;"
+    ]
+  },
+  "references": [
+    "https://docs.rs/ring/latest/ring/signature/index.html"
+  ],
+  "author": "Hard Keel"
+}

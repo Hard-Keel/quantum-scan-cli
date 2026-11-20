@@ -1,0 +1,44 @@
+name: Hard Keel Quantum Scan
+description: Find encryption quantum computers will break, weak encryption, exposed infrastructure settings and leaked keys, and write an encryption inventory.
+author: Hard Keel
+branding:
+  icon: shield
+  color: gray-dark
+inputs:
+  path:
+    description: Folder to scan
+    default: "."
+  fail-on:
+    description: "Fail the step on these: secret, weak-now, exposed, quantum-vulnerable, or none"
+    default: "secret,weak-now,exposed"
+  sarif:
+    description: Where to write SARIF results, for GitHub code scanning
+    default: quantum-scan.sarif
+  cbom:
+    description: Where to write the encryption inventory (CycloneDX 1.6 CBOM)
+    default: quantum-scan.cbom.json
+  report:
+    description: Where to write the migration report (Markdown)
+    default: quantum-scan-report.md
+outputs:
+  sarif:
+    description: Path of the SARIF file
+    value: ${{ inputs.sarif }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        QS: ${{ github.action_path }}/dist/cli.js
+        IN_PATH: ${{ inputs.path }}
+        IN_FAIL: ${{ inputs.fail-on }}
+        IN_SARIF: ${{ inputs.sarif }}
+        IN_CBOM: ${{ inputs.cbom }}
+        IN_REPORT: ${{ inputs.report }}
+        REPO: ${{ github.repository }}
+      run: |
+        node "$QS" "$IN_PATH" --name "$REPO" --format sarif --output "$IN_SARIF" --fail-on none
+        status=0
+        node "$QS" "$IN_PATH" --name "$REPO" --cbom "$IN_CBOM" --report "$IN_REPORT" --fail-on "$IN_FAIL" || status=$?
+        cat "$IN_REPORT" >> "$GITHUB_STEP_SUMMARY"
+        exit $status

@@ -1,0 +1,22 @@
+{
+  "id": "rb-openssl-ec",
+  "title": "Elliptic-curve keys with Ruby's OpenSSL",
+  "extensions": [
+    ".rb"
+  ],
+  "pattern": "\\bOpenSSL::PKey::EC\\.(?:new|generate)\\b",
+  "algorithm": "ECDSA",
+  "examples": {
+    "match": [
+      "key = OpenSSL::PKey::EC.generate('prime256v1')",
+      "key = OpenSSL::PKey::EC.new(pem)"
+    ],
+    "noMatch": [
+      "key = OpenSSL::PKey::RSA.new(2048)"
+    ]
+  },
+  "references": [
+    "https://docs.ruby-lang.org/en/master/OpenSSL/PKey/EC.html"
+  ],
+  "author": "Hard Keel"
+}

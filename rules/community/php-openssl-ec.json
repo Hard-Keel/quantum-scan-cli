@@ -1,0 +1,21 @@
+{
+  "id": "php-openssl-ec",
+  "title": "Elliptic-curve keys with PHP's OpenSSL extension",
+  "extensions": [
+    ".php"
+  ],
+  "pattern": "\\bOPENSSL_KEYTYPE_EC\\b",
+  "algorithm": "ECDSA",
+  "examples": {
+    "match": [
+      "$key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);"
+    ],
+    "noMatch": [
+      "$key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_RSA]);"
+    ]
+  },
+  "references": [
+    "https://www.php.net/manual/en/function.openssl-pkey-new.php"
+  ],
+  "author": "Hard Keel"
+}

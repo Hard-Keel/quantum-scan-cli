@@ -1,0 +1,22 @@
+{
+  "id": "swift-seckey-rsa",
+  "title": "RSA keys with Apple's Security framework",
+  "extensions": [
+    ".swift"
+  ],
+  "pattern": "\\bkSecAttrKeyTypeRSA\\b",
+  "algorithm": "RSA",
+  "keySize": "kSecAttrKeySizeInBits[^:]*:\\s*(\\d{3,5})",
+  "examples": {
+    "match": [
+      "kSecAttrKeyType as String: kSecAttrKeyTypeRSA,"
+    ],
+    "noMatch": [
+      "kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,"
+    ]
+  },
+  "references": [
+    "https://developer.apple.com/documentation/security/ksecattrkeytypersa"
+  ],
+  "author": "Hard Keel"
+}
