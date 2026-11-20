@@ -1,0 +1,21 @@
+{
+  "id": "rust-x25519-dalek",
+  "title": "X25519 key exchange with x25519-dalek",
+  "extensions": [
+    ".rs"
+  ],
+  "pattern": "\\bx25519_dalek::",
+  "algorithm": "X25519",
+  "examples": {
+    "match": [
+      "use x25519_dalek::{EphemeralSecret, PublicKey};"
+    ],
+    "noMatch": [
+      "use ed25519_dalek::SigningKey;"
+    ]
+  },
+  "references": [
+    "https://docs.rs/x25519-dalek"
+  ],
+  "author": "Hard Keel"
+}

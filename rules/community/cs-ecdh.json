@@ -1,0 +1,21 @@
+{
+  "id": "cs-ecdh",
+  "title": "ECDH key exchange in .NET",
+  "extensions": [
+    ".cs"
+  ],
+  "pattern": "\\bECDiffieHellman\\.Create\\s*\\(|\\bnew\\s+ECDiffieHellmanCng\\s*\\(",
+  "algorithm": "ECDH",
+  "examples": {
+    "match": [
+      "using var ecdh = ECDiffieHellman.Create();"
+    ],
+    "noMatch": [
+      "using var ecdsa = ECDsa.Create();"
+    ]
+  },
+  "references": [
+    "https://learn.microsoft.com/dotnet/api/system.security.cryptography.ecdiffiehellman"
+  ],
+  "author": "Hard Keel"
+}

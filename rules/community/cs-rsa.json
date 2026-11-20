@@ -1,0 +1,23 @@
+{
+  "id": "cs-rsa",
+  "title": "RSA keys in .NET",
+  "extensions": [
+    ".cs"
+  ],
+  "pattern": "\\bRSA\\.Create\\s*\\(|\\bnew\\s+RSACryptoServiceProvider\\s*\\(",
+  "algorithm": "RSA",
+  "keySize": "(?:RSA\\.Create|RSACryptoServiceProvider)\\s*\\(\\s*(\\d{3,5})",
+  "examples": {
+    "match": [
+      "using var rsa = RSA.Create(2048);",
+      "var p = new RSACryptoServiceProvider(1024);"
+    ],
+    "noMatch": [
+      "using var aes = Aes.Create();"
+    ]
+  },
+  "references": [
+    "https://learn.microsoft.com/dotnet/api/system.security.cryptography.rsa"
+  ],
+  "author": "Hard Keel"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "rb-openssl-rsa",
+  "title": "RSA keys with Ruby's OpenSSL",
+  "extensions": [
+    ".rb"
+  ],
+  "pattern": "\\bOpenSSL::PKey::RSA\\.(?:new|generate)\\b",
+  "algorithm": "RSA",
+  "keySize": "RSA\\.(?:new|generate)\\s*\\(\\s*(\\d{3,5})",
+  "examples": {
+    "match": [
+      "key = OpenSSL::PKey::RSA.new(2048)",
+      "OpenSSL::PKey::RSA.new(File.read('key.pem'))"
+    ],
+    "noMatch": [
+      "key = OpenSSL::PKey::EC.generate('prime256v1')",
+      "raise 'key must be of type OpenSSL::PKey::RSA'"
+    ]
+  },
+  "references": [
+    "https://docs.ruby-lang.org/en/master/OpenSSL/PKey/RSA.html"
+  ],
+  "author": "Hard Keel"
+}

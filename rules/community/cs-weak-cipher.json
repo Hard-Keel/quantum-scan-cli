@@ -1,0 +1,30 @@
+{
+  "id": "cs-weak-cipher",
+  "title": "DES or 3DES in .NET",
+  "extensions": [
+    ".cs"
+  ],
+  "pattern": "\\b(DES|TripleDES)\\.Create\\s*\\(",
+  "algorithm": {
+    "groups": [
+      1
+    ],
+    "map": {
+      "des": "DES",
+      "tripledes": "3DES"
+    }
+  },
+  "examples": {
+    "match": [
+      "using var des = TripleDES.Create();",
+      "var d = DES.Create();"
+    ],
+    "noMatch": [
+      "using var aes = Aes.Create();"
+    ]
+  },
+  "references": [
+    "https://learn.microsoft.com/dotnet/api/system.security.cryptography.tripledes"
+  ],
+  "author": "Hard Keel"
+}

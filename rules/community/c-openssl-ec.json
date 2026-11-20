@@ -1,0 +1,27 @@
+{
+  "id": "c-openssl-ec",
+  "title": "Elliptic-curve keys with OpenSSL in C or C++",
+  "extensions": [
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hpp"
+  ],
+  "pattern": "\\bEC_KEY_new_by_curve_name\\s*\\(|\\bEVP_PKEY_EC\\b|\\bEVP_EC_gen\\s*\\(",
+  "algorithm": "EC",
+  "examples": {
+    "match": [
+      "EC_KEY *k = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);",
+      "EVP_PKEY *p = EVP_EC_gen(\"P-256\");"
+    ],
+    "noMatch": [
+      "EVP_PKEY *p = EVP_RSA_gen(3072);"
+    ]
+  },
+  "references": [
+    "https://docs.openssl.org/3.5/man3/EVP_EC_gen/"
+  ],
+  "author": "Hard Keel"
+}

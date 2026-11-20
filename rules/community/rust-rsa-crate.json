@@ -1,0 +1,22 @@
+{
+  "id": "rust-rsa-crate",
+  "title": "RSA key generation with the rsa crate",
+  "extensions": [
+    ".rs"
+  ],
+  "pattern": "\\bRsaPrivateKey::new\\s*\\(",
+  "algorithm": "RSA",
+  "keySize": "RsaPrivateKey::new\\s*\\([^,]+,\\s*(\\d{3,5})",
+  "examples": {
+    "match": [
+      "let key = RsaPrivateKey::new(&mut rng, 2048)?;"
+    ],
+    "noMatch": [
+      "let pk = RsaPublicKey::from(&key);"
+    ]
+  },
+  "references": [
+    "https://docs.rs/rsa"
+  ],
+  "author": "Hard Keel"
+}

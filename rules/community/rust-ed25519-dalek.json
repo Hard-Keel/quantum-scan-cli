@@ -1,0 +1,21 @@
+{
+  "id": "rust-ed25519-dalek",
+  "title": "Ed25519 signatures with ed25519-dalek",
+  "extensions": [
+    ".rs"
+  ],
+  "pattern": "\\bed25519_dalek::",
+  "algorithm": "Ed25519",
+  "examples": {
+    "match": [
+      "use ed25519_dalek::{Signer, SigningKey};"
+    ],
+    "noMatch": [
+      "use x25519_dalek::PublicKey;"
+    ]
+  },
+  "references": [
+    "https://docs.rs/ed25519-dalek"
+  ],
+  "author": "Hard Keel"
+}

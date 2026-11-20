@@ -1,0 +1,30 @@
+{
+  "id": "swift-cryptokit-25519",
+  "title": "Curve25519 with CryptoKit",
+  "extensions": [
+    ".swift"
+  ],
+  "pattern": "\\bCurve25519\\.(Signing|KeyAgreement)\\b",
+  "algorithm": {
+    "groups": [
+      1
+    ],
+    "map": {
+      "signing": "Ed25519",
+      "keyagreement": "X25519"
+    }
+  },
+  "examples": {
+    "match": [
+      "let key = Curve25519.Signing.PrivateKey()",
+      "let k = Curve25519.KeyAgreement.PrivateKey()"
+    ],
+    "noMatch": [
+      "let k = MLKEM768.PrivateKey()"
+    ]
+  },
+  "references": [
+    "https://developer.apple.com/documentation/cryptokit/curve25519"
+  ],
+  "author": "Hard Keel"
+}
