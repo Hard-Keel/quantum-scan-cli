@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { applyIgnore, IGNORE_FILE, parseIgnore } from "./ignore.js";
+import { applyIgnore, applyIgnoreTargets, IGNORE_FILE, parseIgnore } from "./ignore.js";
 import { buildCbom } from "./cbom.js";
 import { ActivityLog } from "./map-activity.js";
 import { CARDS, cardText } from "./map-areas.js";
@@ -14,7 +14,7 @@ import { emptyResult } from "./map-types.js";
 import { proofRecord, runWeb } from "./map-web.js";
 import { scanFiles } from "./scan.js";
 import { INDUSTRIES, SIZES } from "./share-config.js";
-import { walk } from "./walk.js";
+import { walkFolder } from "./walk.js";
 export const SCOPE_FILE = "quantum-scan.scope.json";
 export function parseScope(text) {
     let v;
@@ -131,7 +131,10 @@ export async function runMap(o) {
             const dir = resolve(o.cwd, folder);
             log.record("code", dir, "read source and config files");
             try {
-                const { findings, pqc, filesScanned } = scanFiles(walk(dir));
+                const walked = walkFolder(dir);
+                for (const u of walked.unreadable)
+                    res.errors.push({ area: "code", target: `${folder}/${u.path}`.replace(/^\.\//, ""), kind: u.reason === "permission denied" ? "permission" : "read", message: `couldn't read (${u.reason})` });
+                const { findings, pqc, filesScanned } = scanFiles(walked.files);
                 const ign = join(dir, IGNORE_FILE);
                 const { kept, ignored: ig } = applyIgnore(findings, existsSync(ign) ? parseIgnore(readFileSync(ign, "utf8")) : []);
                 for (const [k, n] of Object.entries(ig))
@@ -159,11 +162,27 @@ export async function runMap(o) {
             }
             write("One record covers the domain and everything under it.\n");
         }
+        if (res.dnsFailed.length) {
+            write(`\nCouldn't look up the ownership record for ${res.dnsFailed.join(", ")} because DNS didn't answer, so ${res.dnsFailed.length === 1 ? "it was" : "they were"} skipped. Check this machine's DNS settings, then run again.\n`);
+        }
     }
     if (scope.areas.host)
         results.push(runHost(log, o.hostIO));
+    // Known leftovers the person accepted in .quantum-scan-ignore (websites and this machine; code was handled per folder).
+    const ignorePath = join(o.cwd, IGNORE_FILE);
+    const entries = existsSync(ignorePath) ? parseIgnore(readFileSync(ignorePath, "utf8")) : [];
+    const accepted = [];
+    for (const r of results) {
+        if (r.area === "code" || !entries.length)
+            continue;
+        const a = applyIgnoreTargets(r.findings, entries);
+        r.findings = a.kept;
+        accepted.push(...a.accepted);
+        for (const f of a.accepted)
+            ignored[f.ruleId] = (ignored[f.ruleId] ?? 0) + 1;
+    }
     const ranked = rank(results.flatMap((r) => r.findings));
-    const report = buildMapReport(results, ranked, o.version);
+    const report = buildMapReport(results, ranked, o.version, new Date(), accepted);
     writeFileSync(join(o.outDir, "map.json"), JSON.stringify(report, null, 2) + "\n");
     writeFileSync(join(o.outDir, "map.html"), mapHtml(report, log.entries));
     writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }), null, 2) + "\n");

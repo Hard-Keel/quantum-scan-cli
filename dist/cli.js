@@ -5,7 +5,7 @@
 // and writes an encryption inventory (CycloneDX CBOM) and a migration report.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { walk } from "./walk.js";
+import { walkFolder } from "./walk.js";
 import { buildCbom } from "./cbom.js";
 import { migrationReportMarkdown, prSummaryLine, shortLabel, sortFindings } from "./report.js";
 import { buildSarif } from "./sarif.js";
@@ -15,7 +15,7 @@ import { gradeSentence, readinessScore } from "./score.js";
 import { applyIgnore, IGNORE_FILE, parseIgnore } from "./ignore.js";
 import { ActivityLog } from "./map-activity.js";
 import { parseScope, runMap, SCOPE_FILE } from "./map-run.js";
-import { hasProof, parseTarget, proofRecord } from "./map-web.js";
+import { checkProof, parseTarget, proofRecord, publicLookup } from "./map-web.js";
 import { buildPayload, diffRuns, sendPayload } from "./share.js";
 import { folderKey, INDUSTRIES, loadSettings, saveSettings, settingsPath, sharingState, showNoticeIfNeeded, SIZES } from "./share-config.js";
 export const VERSION = "0.2.0";
@@ -124,7 +124,19 @@ export function scanCommand(argv) {
         return { code: 0 };
     }
     const str = (k) => (typeof opts[k] === "string" ? opts[k] : undefined);
-    const scanned = scanFiles(walk(dir));
+    let walked;
+    try {
+        walked = walkFolder(dir);
+    }
+    catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
+        return { code: 2 };
+    }
+    if (walked.unreadable.length) {
+        const list = walked.unreadable.slice(0, 5).map((u) => `${u.path} (${u.reason})`).join(", ");
+        console.error(`Skipped ${walked.unreadable.length} path${walked.unreadable.length === 1 ? "" : "s"} that couldn't be read: ${list}${walked.unreadable.length > 5 ? ", ..." : ""}`);
+    }
+    const scanned = scanFiles(walked.files);
     const { filesScanned, pqc } = scanned;
     const ignorePath = join(dir, IGNORE_FILE);
     const { kept: findings, ignored } = applyIgnore(scanned.findings, existsSync(ignorePath) ? parseIgnore(readFileSync(ignorePath, "utf8")) : []);
@@ -174,7 +186,7 @@ export function scanCommand(argv) {
     const pqcCounts = {};
     for (const p of pqc)
         pqcCounts[p.algorithm] = (pqcCounts[p.algorithm] ?? 0) + 1;
-    const facts = { command: "scan", areas: ["code"], rules, algorithms, quantumSafe: pqcCounts, fixed: {}, ignored, replacements: {}, errors: [] };
+    const facts = { command: "scan", areas: ["code"], rules, algorithms, quantumSafe: pqcCounts, fixed: {}, ignored, replacements: {}, errors: walked.unreadable.some((u) => u.reason === "permission denied") ? ["permission"] : walked.unreadable.length ? ["read"] : [] };
     return { code, facts, stateKey: folderKey(dir), state: { rules, pqc: pqcCounts } };
 }
 /** Records this run, works out what was fixed since the last one, and sends the summary unless sharing is off. */
@@ -239,9 +251,14 @@ async function proveCommand(domain, s) {
     const token = scope && !("error" in scope) && scope.ownershipToken ? scope.ownershipToken : s.ownershipToken;
     const r = proofRecord(p.host, token);
     console.log(`To prove you own ${p.host}, add this DNS record:\n\n  Name:  ${r.name}\n  Type:  TXT\n  Value: ${r.value}\n\nIt covers ${p.host} and everything under it. It only allows look-only checks from this machine${scope && !("error" in scope) && scope.ownershipToken ? " and anyone using this scope file" : ""}.`);
-    const ok = await hasProof(p.host, token, new ActivityLog());
-    console.log(ok ? `\nFound it. ${p.host} is proved.` : "\nNot found yet. DNS changes can take a few minutes; run this again to check.");
-    return ok ? 0 : 1;
+    const r2 = await checkProof(p.host, token, new ActivityLog(), undefined, publicLookup());
+    if (r2.status === "found")
+        console.log(`\nFound it. ${p.host} is proved.`);
+    else if (r2.status === "missing")
+        console.log("\nNot found yet. DNS changes can take a few minutes; run this again to check.");
+    else
+        console.log(`\nCouldn't check: ${r2.detail}. Check this machine's DNS settings, then run this again.`);
+    return r2.status === "found" ? 0 : 1;
 }
 /** Entry point: subcommands, the first-run notice and the anonymized summary. */
 export async function run(argv, deps = {}) {

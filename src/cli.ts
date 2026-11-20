@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { walk } from "./walk.ts";
+import { walkFolder } from "./walk.ts";
 import { buildCbom } from "./cbom.ts";
 import { migrationReportMarkdown, prSummaryLine, shortLabel, sortFindings } from "./report.ts";
 import { buildSarif } from "./sarif.ts";
@@ -17,7 +17,7 @@ import type { Finding } from "./types.ts";
 import { applyIgnore, IGNORE_FILE, parseIgnore } from "./ignore.ts";
 import { ActivityLog } from "./map-activity.ts";
 import { parseScope, runMap, SCOPE_FILE } from "./map-run.ts";
-import { hasProof, parseTarget, proofRecord } from "./map-web.ts";
+import { checkProof, parseTarget, proofRecord, publicLookup } from "./map-web.ts";
 import { buildPayload, diffRuns, sendPayload, type Payload, type RunFacts } from "./share.ts";
 import { folderKey, INDUSTRIES, loadSettings, saveSettings, settingsPath, sharingState, showNoticeIfNeeded, SIZES, type FolderState, type Industry, type SharingReason, type Settings, type Size } from "./share-config.ts";
 
@@ -129,7 +129,18 @@ export function scanCommand(argv: string[]): { code: number; facts?: RunFacts; s
   }
   const str = (k: string) => (typeof opts[k] === "string" ? (opts[k] as string) : undefined);
 
-  const scanned = scanFiles(walk(dir));
+  let walked;
+  try {
+    walked = walkFolder(dir);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    return { code: 2 };
+  }
+  if (walked.unreadable.length) {
+    const list = walked.unreadable.slice(0, 5).map((u) => `${u.path} (${u.reason})`).join(", ");
+    console.error(`Skipped ${walked.unreadable.length} path${walked.unreadable.length === 1 ? "" : "s"} that couldn't be read: ${list}${walked.unreadable.length > 5 ? ", ..." : ""}`);
+  }
+  const scanned = scanFiles(walked.files);
   const { filesScanned, pqc } = scanned;
   const ignorePath = join(dir, IGNORE_FILE);
   const { kept: findings, ignored } = applyIgnore(scanned.findings, existsSync(ignorePath) ? parseIgnore(readFileSync(ignorePath, "utf8")) : []);
@@ -171,7 +182,7 @@ export function scanCommand(argv: string[]): { code: number; facts?: RunFacts; s
   }
   const pqcCounts: Record<string, number> = {};
   for (const p of pqc) pqcCounts[p.algorithm] = (pqcCounts[p.algorithm] ?? 0) + 1;
-  const facts: RunFacts = { command: "scan", areas: ["code"], rules, algorithms, quantumSafe: pqcCounts, fixed: {}, ignored, replacements: {}, errors: [] };
+  const facts: RunFacts = { command: "scan", areas: ["code"], rules, algorithms, quantumSafe: pqcCounts, fixed: {}, ignored, replacements: {}, errors: walked.unreadable.some((u) => u.reason === "permission denied") ? ["permission"] : walked.unreadable.length ? ["read"] : [] };
   return { code, facts, stateKey: folderKey(dir), state: { rules, pqc: pqcCounts } };
 }
 
@@ -237,9 +248,11 @@ async function proveCommand(domain: string | undefined, s: Settings): Promise<nu
   const token = scope && !("error" in scope) && scope.ownershipToken ? scope.ownershipToken : s.ownershipToken;
   const r = proofRecord(p.host, token);
   console.log(`To prove you own ${p.host}, add this DNS record:\n\n  Name:  ${r.name}\n  Type:  TXT\n  Value: ${r.value}\n\nIt covers ${p.host} and everything under it. It only allows look-only checks from this machine${scope && !("error" in scope) && scope.ownershipToken ? " and anyone using this scope file" : ""}.`);
-  const ok = await hasProof(p.host, token, new ActivityLog());
-  console.log(ok ? `\nFound it. ${p.host} is proved.` : "\nNot found yet. DNS changes can take a few minutes; run this again to check.");
-  return ok ? 0 : 1;
+  const r2 = await checkProof(p.host, token, new ActivityLog(), undefined, publicLookup());
+  if (r2.status === "found") console.log(`\nFound it. ${p.host} is proved.`);
+  else if (r2.status === "missing") console.log("\nNot found yet. DNS changes can take a few minutes; run this again to check.");
+  else console.log(`\nCouldn't check: ${r2.detail}. Check this machine's DNS settings, then run this again.`);
+  return r2.status === "found" ? 0 : 1;
 }
 
 /** Entry point: subcommands, the first-run notice and the anonymized summary. */
