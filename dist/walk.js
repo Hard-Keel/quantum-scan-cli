@@ -1,26 +1,63 @@
 // Reads the files in a folder that the scanner looks at.
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
+// A folder or file that can't be read (no permission, removed mid-scan) is noted and skipped,
+// so one locked folder can't stop the whole scan.
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { shouldScan } from "./scan.js";
-export function walk(root, base = root, out = []) {
-    for (const name of readdirSync(root)) {
-        const full = join(root, name);
-        const rel = relative(base, full).split("\\").join("/");
-        // lstat: symbolic links are skipped, so a broken or looping link can't stop the scan.
-        let st;
+function reasonOf(e) {
+    const code = String(e?.code ?? "");
+    if (code === "EACCES" || code === "EPERM")
+        return "permission denied";
+    if (code === "ENOENT")
+        return "removed during the scan";
+    return code || (e instanceof Error ? e.message : String(e));
+}
+/** Throws a plain-English error when the folder itself is missing or isn't a folder. */
+export function walkFolder(root) {
+    if (!existsSync(root))
+        throw new Error(`Can't scan ${root}: that folder doesn't exist.`);
+    if (!statSync(root).isDirectory())
+        throw new Error(`Can't scan ${root}: that's a file, not a folder.`);
+    const res = { files: [], unreadable: [] };
+    const visit = (dir) => {
+        let names;
         try {
-            st = lstatSync(full);
+            names = readdirSync(dir);
         }
-        catch {
-            continue;
+        catch (e) {
+            if (dir === root)
+                throw new Error(`Can't scan ${root}: ${reasonOf(e)}.`);
+            res.unreadable.push({ path: relative(root, dir).split("\\").join("/") + "/", reason: reasonOf(e) });
+            return;
         }
-        if (st.isDirectory()) {
-            if (name !== ".git" && shouldScan(`${rel}/x`))
-                walk(full, base, out);
+        for (const name of names) {
+            const full = join(dir, name);
+            const rel = relative(root, full).split("\\").join("/");
+            // lstat: symbolic links are skipped, so a broken or looping link can't stop the scan.
+            let st;
+            try {
+                st = lstatSync(full);
+            }
+            catch {
+                continue;
+            }
+            if (st.isDirectory()) {
+                if (name !== ".git" && shouldScan(`${rel}/x`))
+                    visit(full);
+            }
+            else if (st.isFile() && st.size <= 1_000_000 && shouldScan(rel)) {
+                try {
+                    res.files.push({ path: rel, content: readFileSync(full, "utf8") });
+                }
+                catch (e) {
+                    res.unreadable.push({ path: rel, reason: reasonOf(e) });
+                }
+            }
         }
-        else if (st.isFile() && st.size <= 1_000_000 && shouldScan(rel)) {
-            out.push({ path: rel, content: readFileSync(full, "utf8") });
-        }
-    }
-    return out;
+    };
+    visit(root);
+    return res;
+}
+export function walk(root) {
+    return walkFolder(root).files;
 }

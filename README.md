@@ -82,7 +82,7 @@ Checks more than code, one area at a time, and asks before each one. For every a
 
 - **This machine:** SSH server settings and host keys, OpenSSL settings, certificates on disk, and on Windows the TLS settings and machine certificate store. Read only. It changes nothing and never reads private key files.
 
-Results are ranked by when to act: broken now, at risk from data recorded now and read later, long-lived signatures, then the rest. The map is written to `quantum-scan-map/` as `map.html`, `map.json`, a CycloneDX CBOM and `activity.log`, which lists every connection and every file read, with the time and the reason. Nothing leaves your machine except the summary below.
+Results get the same readiness grade as a code scan, and are ranked by when to act: broken now, at risk from data recorded now and read later, long-lived signatures, then the rest. The map is written to `quantum-scan-map/` as `map.html`, `map.json`, a CycloneDX CBOM and `activity.log`, which lists every connection and every file read, with the time and the reason. Nothing leaves your machine except the summary below.
 
 For pipelines, save your answers to `quantum-scan.scope.json` when asked, then run `quantum-scan map --scope quantum-scan.scope.json`. It checks only what the file lists. Add `--fail-on broken` to fail the build when anything is broken now.
 
@@ -101,6 +101,17 @@ src/hash.py:py-weak-hash
 ```
 
 A leaked key or password can only be left out by naming its file, never by check alone.
+
+For `quantum-scan map`, the same file in the folder you run it from can accept a known leftover on a website or this machine, for example a setting your host won't let you change:
+
+```
+# one check on one site
+example.com:443:web-tls-static-rsa
+# everything on one site, any port
+legacy.example.com
+```
+
+Accepted items still appear in the report, in their own section, but don't count toward the score.
 
 ## Anonymized sharing
 

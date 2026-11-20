@@ -5,7 +5,7 @@
 import { promises as dns } from "node:dns";
 import { isIP, Socket, connect as netConnect } from "node:net";
 import { connect as tlsConnect, type ConnectionOptions, type TLSSocket } from "node:tls";
-import { X509Certificate } from "node:crypto";
+import { randomBytes, X509Certificate } from "node:crypto";
 import { ALGORITHMS } from "./rules.ts";
 import type { ActivityLog } from "./map-activity.ts";
 import { emptyResult, type AreaResult, type MapFinding } from "./map-types.ts";
@@ -68,16 +68,56 @@ export function parentDomains(host: string): string[] {
 
 export type TxtLookup = (name: string) => Promise<string[][]>;
 
-/** Checks the DNS record that proves a domain is yours. */
-export async function hasProof(domain: string, token: string, log: ActivityLog, lookup: TxtLookup = (n) => dns.resolveTxt(n)): Promise<boolean> {
+/** Public resolvers tried only when this machine's own DNS doesn't answer (for example a local stub that is down). */
+export const PUBLIC_RESOLVERS = ["1.1.1.1", "8.8.8.8"];
+
+export function publicLookup(servers = PUBLIC_RESOLVERS): TxtLookup {
+  return (name) => {
+    const r = new dns.Resolver({ timeout: 3000, tries: 2 });
+    r.setServers(servers);
+    return r.resolveTxt(name);
+  };
+}
+
+/** DNS answered, and the name has no such record. Anything else means DNS itself didn't answer. */
+const DNS_NO_RECORD = new Set(["ENOTFOUND", "ENODATA", "ENONAME"]);
+
+export type ProofStatus = "found" | "missing" | "lookup-failed";
+export interface ProofResult {
+  status: ProofStatus;
+  detail?: string; // why the lookup failed, for the local report only
+}
+
+/**
+ * Checks the DNS record that proves a domain is yours. Uses this machine's DNS first. If that DNS
+ * doesn't answer at all, asks a public resolver for this one record, and says so in the activity log.
+ */
+export async function checkProof(domain: string, token: string, log: ActivityLog, lookup: TxtLookup = (n) => dns.resolveTxt(n), fallback?: TxtLookup | null): Promise<ProofResult> {
   const { name, value } = proofRecord(domain, token);
+  const match = (records: string[][]) => records.some((chunks) => chunks.join("").trim() === value);
   log.record("web", name, "DNS lookup of the ownership record");
+  let firstError: string;
   try {
-    const records = await lookup(name);
-    return records.some((chunks) => chunks.join("").trim() === value);
-  } catch {
-    return false;
+    return { status: match(await lookup(name)) ? "found" : "missing" };
+  } catch (e) {
+    const code = String((e as { code?: string })?.code ?? "");
+    if (DNS_NO_RECORD.has(code)) return { status: "missing" };
+    firstError = code || (e instanceof Error ? e.message : String(e));
   }
+  if (!fallback) return { status: "lookup-failed", detail: `this machine's DNS didn't answer (${firstError})` };
+  log.record("web", name, `DNS lookup of the ownership record via a public resolver, because this machine's DNS didn't answer (${firstError})`);
+  try {
+    return { status: match(await fallback(name)) ? "found" : "missing" };
+  } catch (e) {
+    const code = String((e as { code?: string })?.code ?? "");
+    if (DNS_NO_RECORD.has(code)) return { status: "missing" };
+    return { status: "lookup-failed", detail: `this machine's DNS didn't answer (${firstError}), and neither did a public resolver (${code || "error"})` };
+  }
+}
+
+/** Whether a domain is proved. Kept for callers that only need yes or no. */
+export async function hasProof(domain: string, token: string, log: ActivityLog, lookup?: TxtLookup, fallback?: TxtLookup | null): Promise<boolean> {
+  return (await checkProof(domain, token, log, lookup, fallback)).status === "found";
 }
 
 // ---------- TLS ----------
@@ -249,7 +289,7 @@ export function certFindings(cert: X509Certificate, host: string, label: string,
   }
   if (!cert.checkHost(host)) {
     out.push({ ...base, ruleId: "web-cert-name", title: "Certificate doesn't match this hostname", algorithm: "Certificate name mismatch", primitive: "protocol", risk: "exposed", severity: "medium", fix: "Use a certificate that names this hostname." });
-  } else if (authorized === false && authError) {
+  } else if (authorized === false && authError && !/CERT_HAS_EXPIRED/i.test(authError)) {
     const self = /SELF_SIGNED|self.signed/i.test(authError);
     out.push({
       ...base,
@@ -263,7 +303,7 @@ export function certFindings(cert: X509Certificate, host: string, label: string,
     });
   }
   if (sig?.weak) {
-    out.push({ ...base, ruleId: "web-cert-weak-signature", title: `Certificate signed with ${sig.name}`, algorithm: "SHA-1", primitive: "hash", risk: "weak-now", severity: "high", fix: "Reissue the certificate signed with SHA-256 or stronger." });
+    out.push({ ...base, ruleId: "web-cert-weak-signature", title: `Certificate signed with ${sig.name}`, algorithm: /MD5/.test(sig.name) ? "MD5" : "SHA-1", primitive: "hash", risk: "weak-now", severity: "high", fix: "Reissue the certificate signed with SHA-256 or stronger." });
   }
   if (key.type === "RSA" && key.bits && key.bits < 2048) {
     out.push({ ...base, ruleId: "web-cert-small-rsa", title: `Certificate uses a ${key.bits}-bit RSA key`, algorithm: "RSA", primitive: "signature", risk: "weak-now", severity: "high", keySize: key.bits, fix: "Reissue with at least a 2048-bit RSA key, or ECDSA P-256." });
@@ -284,13 +324,90 @@ export function certFindings(cert: X509Certificate, host: string, label: string,
   return { findings: out, pqc: key.type === "ML-DSA" || Boolean(sig?.pqc) };
 }
 
+
+// ---------- raw cipher suite probe ----------
+// Recent OpenSSL builds (Node.js 22 and later) can't offer 3DES at all, so a normal handshake can't test it.
+// This sends one ordinary TLS 1.2 ClientHello listing only the given cipher suites, reads the server's
+// answer (ServerHello or an alert) and hangs up. No keys are exchanged.
+
+export const SUITES_3DES = [0x000a, 0xc012, 0xc008, 0x0016, 0x0013];
+
+function u16(n: number): Buffer {
+  const b = Buffer.alloc(2);
+  b.writeUInt16BE(n);
+  return b;
+}
+const vec16 = (b: Buffer) => Buffer.concat([u16(b.length), b]);
+const ext = (type: number, body: Buffer) => Buffer.concat([u16(type), vec16(body)]);
+
+export function clientHello(host: string, suites: number[]): Buffer {
+  const name = Buffer.from(host, "ascii");
+  const sni = vec16(Buffer.concat([Buffer.from([0]), vec16(name)]));
+  const exts = Buffer.concat([
+    isIP(host) ? Buffer.alloc(0) : ext(0x0000, sni),
+    ext(0x000a, vec16(Buffer.concat([0x001d, 0x0017, 0x0018].map(u16)))), // groups: x25519, P-256, P-384
+    ext(0x000b, Buffer.from([1, 0])), // uncompressed points
+    ext(0x000d, vec16(Buffer.concat([0x0401, 0x0501, 0x0201, 0x0403, 0x0503, 0x0203, 0x0804].map(u16)))),
+    ext(0xff01, Buffer.from([0])), // renegotiation info
+  ]);
+  const body = Buffer.concat([
+    Buffer.from([0x03, 0x03]), // TLS 1.2
+    randomBytes(32),
+    Buffer.from([0]), // no session id
+    vec16(Buffer.concat(suites.map(u16))),
+    Buffer.from([1, 0]), // no compression
+    vec16(exts),
+  ]);
+  const hs = Buffer.concat([Buffer.from([1, (body.length >> 16) & 255, (body.length >> 8) & 255, body.length & 255]), body]);
+  return Buffer.concat([Buffer.from([0x16, 0x03, 0x01]), vec16(hs)]);
+}
+
+/** The cipher suite a ServerHello picked, null for an alert, undefined while more bytes are needed. */
+export function serverHelloSuite(buf: Buffer): number | null | undefined {
+  if (buf.length < 5) return undefined;
+  if (buf[0] === 0x15) return null; // alert: the server refused every suite offered
+  if (buf[0] !== 0x16) return null;
+  if (buf.length < 5 + 4 + 2 + 32 + 1) return undefined;
+  if (buf[5] !== 0x02) return null;
+  const sidLen = buf[5 + 4 + 2 + 32];
+  const at = 5 + 4 + 2 + 32 + 1 + sidLen;
+  if (buf.length < at + 2) return undefined;
+  return buf.readUInt16BE(at);
+}
+
+export type CipherProbeFn = (host: string, port: number, suites: number[], servername?: string) => Promise<boolean>;
+
+/** Whether the server accepts one of these TLS 1.2 cipher suites. */
+export const acceptsSuites: CipherProbeFn = (host, port, suites, servername) =>
+  new Promise((resolveP) => {
+    let buf = Buffer.alloc(0);
+    let done = false;
+    const sock = netConnect({ host, port });
+    const finish = (v: boolean) => {
+      if (done) return;
+      done = true;
+      sock.destroy();
+      resolveP(v);
+    };
+    sock.setTimeout(TIMEOUT_MS, () => finish(false));
+    sock.on("error", () => finish(false));
+    sock.on("close", () => finish(false));
+    sock.on("connect", () => sock.write(clientHello(servername ?? host, suites)));
+    sock.on("data", (d: Buffer) => {
+      buf = Buffer.concat([buf, d]);
+      const suite = serverHelloSuite(buf);
+      if (suite === undefined && buf.length < 16384) return;
+      finish(typeof suite === "number" && suites.includes(suite));
+    });
+  });
+
 const GAP_MS = 250;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type HandshakeFn = (host: string, port: number, opts: Partial<ConnectionOptions>) => Promise<Handshake>;
 
 /** About 6 handshakes, one at a time: normal, hybrid ML-KEM, TLS 1.0, TLS 1.1, 3DES, static RSA key exchange. */
-export async function checkTls(t: WebTarget, log: ActivityLog, res: AreaResult, hs: HandshakeFn = handshake, gap = GAP_MS): Promise<void> {
+export async function checkTls(t: WebTarget, log: ActivityLog, res: AreaResult, hs: HandshakeFn = handshake, gap = GAP_MS, probe: CipherProbeFn = acceptsSuites): Promise<void> {
   log.record("web", t.label, "TLS handshake, normal settings");
   const main = await hs(t.host, t.port, { minVersion: "TLSv1.2" });
   if (!main.ok) {
@@ -361,23 +478,27 @@ export async function checkTls(t: WebTarget, log: ActivityLog, res: AreaResult, 
 
   // Weak TLS 1.2 cipher suites.
   await sleep(gap);
-  log.record("web", t.label, "TLS 1.2 handshake offering only 3DES cipher suites");
-  const des = await hs(t.host, t.port, { minVersion: "TLSv1", maxVersion: "TLSv1.2", ciphers: "DES-CBC3-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:@SECLEVEL=0" });
-  if (des.ok) res.findings.push({ ...base, ruleId: "web-tls-3des", title: "Accepts 3DES cipher suites", algorithm: "3DES", primitive: "block-cipher", risk: "weak-now", severity: "high", fix: ALGORITHMS["Weak TLS ciphers"].fix });
+  log.record("web", t.label, "TLS 1.2 hello offering only 3DES cipher suites (reads the server's answer, then disconnects)");
+  if (await probe(t.host, t.port, SUITES_3DES)) res.findings.push({ ...base, ruleId: "web-tls-3des", title: "Accepts 3DES cipher suites", algorithm: "3DES", primitive: "block-cipher", risk: "weak-now", severity: "high", fix: ALGORITHMS["Weak TLS ciphers"].fix });
 
   await sleep(gap);
   log.record("web", t.label, "TLS 1.2 handshake offering only static RSA key exchange");
   const rsa = await hs(t.host, t.port, { minVersion: "TLSv1", maxVersion: "TLSv1.2", ciphers: "AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:@SECLEVEL=0" });
   if (rsa.ok) {
+    // With TLS 1.3 on offer, current browsers and clients never pick static RSA (TLS 1.3 also blocks
+    // downgrades), so only old clients are exposed. Still worth fixing, but not an emergency.
+    const modern = main.protocol === "TLSv1.3";
     res.findings.push({
       ...base,
       ruleId: "web-tls-static-rsa",
-      title: "Accepts static RSA key exchange (no forward secrecy)",
+      title: modern ? "Still accepts static RSA key exchange from old clients (no forward secrecy for them)" : "Accepts static RSA key exchange (no forward secrecy)",
       algorithm: "Static RSA key exchange",
       primitive: "key-agreement",
-      risk: "weak-now",
-      severity: "medium",
-      fix: "Allow only ECDHE cipher suites. With static RSA, anyone who later gets the key can read every recorded session.",
+      risk: modern ? "exposed" : "weak-now",
+      severity: modern ? "low" : "medium",
+      fix: modern
+        ? "Allow only ECDHE cipher suites for TLS 1.2. Some hosts charge for this (on Cloudflare, custom cipher suites need Advanced Certificate Manager). If you can't change it now, accept it as a known leftover in .quantum-scan-ignore."
+        : "Allow only ECDHE cipher suites. With static RSA, anyone who later gets the key can read every recorded session.",
     });
   }
 }
@@ -507,14 +628,18 @@ export const MAX_WEB_TARGETS = 200;
 export interface WebOptions {
   token: string;
   lookup?: TxtLookup;
+  /** Tried when lookup fails because DNS didn't answer. Defaults to public resolvers, unless lookup was replaced (tests). */
+  fallbackLookup?: TxtLookup | null;
   handshake?: HandshakeFn;
   ssh?: SshFn;
+  cipherProbe?: CipherProbeFn;
   gapMs?: number;
 }
 
 /** Runs the website area: proves each domain, then checks only addresses under a proved domain. */
-export async function runWeb(targets: string[], log: ActivityLog, o: WebOptions): Promise<AreaResult & { unproved: string[] }> {
-  const res = { ...emptyResult("web"), unproved: [] as string[] };
+export async function runWeb(targets: string[], log: ActivityLog, o: WebOptions): Promise<AreaResult & { unproved: string[]; dnsFailed: string[] }> {
+  const res = { ...emptyResult("web"), unproved: [] as string[], dnsFailed: [] as string[] };
+  const fallback = o.fallbackLookup !== undefined ? o.fallbackLookup : o.lookup ? null : publicLookup();
   const parsed: WebTarget[] = [];
   for (const raw of targets.slice(0, MAX_WEB_TARGETS)) {
     const p = parseTarget(raw);
@@ -524,14 +649,15 @@ export async function runWeb(targets: string[], log: ActivityLog, o: WebOptions)
   if (targets.length > MAX_WEB_TARGETS) res.skipped.push({ target: `${targets.length - MAX_WEB_TARGETS} more`, reason: `at most ${MAX_WEB_TARGETS} addresses per run` });
 
   const proved: string[] = [];
-  const tried = new Set<string>();
+  const tried = new Map<string, ProofResult>();
   for (const t of parsed) {
     if (coveringDomain(t.host, proved)) continue;
     let found: string | null = null;
     for (const d of parentDomains(t.host)) {
       if (tried.has(d)) continue;
-      tried.add(d);
-      if (await hasProof(d, o.token, log, o.lookup)) {
+      const r = await checkProof(d, o.token, log, o.lookup, fallback);
+      tried.set(d, r);
+      if (r.status === "found") {
         found = d;
         break;
       }
@@ -541,12 +667,18 @@ export async function runWeb(targets: string[], log: ActivityLog, o: WebOptions)
 
   for (const t of parsed) {
     if (!coveringDomain(t.host, proved)) {
+      const failed = parentDomains(t.host).map((d) => tried.get(d)).find((r) => r?.status === "lookup-failed");
+      if (failed) {
+        res.errors.push({ area: "web", target: t.label, kind: "dns", message: `couldn't look up the ownership record: ${failed.detail ?? "DNS didn't answer"}` });
+        if (!res.dnsFailed.includes(t.label)) res.dnsFailed.push(t.label);
+        continue;
+      }
       res.skipped.push({ target: t.label, reason: "no ownership record found for this domain" });
       if (!res.unproved.includes(registrable(t.host))) res.unproved.push(registrable(t.host));
       continue;
     }
     if (t.kind === "ssh") await checkSsh(t, log, res, o.ssh);
-    else await checkTls(t, log, res, o.handshake, o.gapMs);
+    else await checkTls(t, log, res, o.handshake, o.gapMs, o.cipherProbe);
   }
   return res;
 }
