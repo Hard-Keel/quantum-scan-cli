@@ -1,8 +1,10 @@
 # Hard Keel Quantum Scan
 
-Finds encryption that quantum computers will break, weak encryption, exposed infrastructure settings, and leaked keys or passwords in your code and infrastructure config. Writes an encryption inventory and a plan for moving to quantum-safe methods.
+A free post-quantum readiness scanner. It finds encryption that quantum computers will break (RSA, elliptic curve and Diffie-Hellman), weak encryption, exposed infrastructure settings, and leaked keys or passwords in your code and infrastructure config, and with `map`, on your own websites, network equipment and the machine you run it on.
 
-Free and open source under the Apache 2.0 licence. No account and no dependencies. Your code and results stay on your machine; see [Anonymized sharing](#anonymized-sharing) for the one small summary it sends, and how to turn it off.
+It grades readiness from A+ to F and writes an encryption inventory (a CycloneDX cryptography bill of materials, or CBOM), SARIF for code scanning, and a plan for moving to post-quantum (PQC) methods on NIST's timeline. Use it from the command line or as a GitHub Action.
+
+Free and open source under the Apache 2.0 license. No account and no dependencies. Your code and results stay on your machine; see [Anonymized sharing](#anonymized-sharing) for the one small summary it sends, and how to turn it off.
 
 ## Run it
 

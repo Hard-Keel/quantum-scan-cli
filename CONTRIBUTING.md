@@ -15,7 +15,7 @@ Open an issue with the "False positive" template. Include the line (with any rea
 
 ## Sign your commits off
 
-Contributions are accepted under the Apache 2.0 licence. Add a sign-off line to each commit (`git commit -s`) to confirm you wrote it, or have the right to submit it, under the [Developer Certificate of Origin](https://developercertificate.org/).
+Contributions are accepted under the Apache 2.0 license. Add a sign-off line to each commit (`git commit -s`) to confirm you wrote it, or have the right to submit it, under the [Developer Certificate of Origin](https://developercertificate.org/).
 
 ## Security problems
 
