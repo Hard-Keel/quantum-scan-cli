@@ -2,6 +2,7 @@
 // Unattended runs use a scope file, which records what was approved. Nothing outside it is touched.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { applyIgnore, applyIgnoreTargets, IGNORE_FILE, parseIgnore } from "./ignore.js";
 import { buildCbom } from "./cbom.js";
@@ -54,6 +55,18 @@ export function parseScope(text) {
 export function terminalPrompter() {
     const rl = createInterface({ input: process.stdin, output: process.stderr });
     return { ask: (q) => rl.question(q), close: () => rl.close() };
+}
+/** Opens a file with the system's default app. Best effort: a failure leaves the path printed above. */
+export function openFile(path) {
+    const [cmd, args] = process.platform === "win32" ? ["explorer.exe", [path]] : process.platform === "darwin" ? ["open", [path]] : ["xdg-open", [path]];
+    try {
+        const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+        child.on("error", () => { });
+        child.unref();
+    }
+    catch {
+        // Nothing to do: the path is already on screen.
+    }
 }
 const yes = (a) => /^\s*y(es)?\s*$/i.test(a);
 /** Walks through each area with its card. The answer is no unless the person types yes. */
@@ -249,7 +262,18 @@ export async function runMap(o) {
     writeFileSync(join(o.outDir, "map.json"), JSON.stringify(report, null, 2) + "\n");
     writeFileSync(join(o.outDir, "map.html"), mapHtml(report, log.entries));
     writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }), null, 2) + "\n");
-    process.stdout.write(mapText(report) + `\n\nWrote ${join(o.outDir, "map.html")}, map.json, map.cbom.json and activity.log. They stay on this machine.\n`);
+    const reportPath = resolve(o.outDir, "map.html");
+    process.stdout.write(mapText(report) + `\n\nYour report: ${reportPath}\nOpen it in a browser. For a PDF, choose Print, then Save as PDF.\nAlso wrote map.json, map.cbom.json and activity.log. They stay on this machine.\n`);
+    if (o.offerOpen ?? (o.interactive && Boolean(process.stdout.isTTY) && !process.env.CI)) {
+        const p = (o.prompter ?? terminalPrompter)();
+        try {
+            if (yes(await p.ask("\nOpen the report now? (y/N) ")))
+                (o.opener ?? openFile)(reportPath);
+        }
+        finally {
+            p.close();
+        }
+    }
     // Counts for the anonymized summary. Targets never leave this function.
     const rules = {};
     const algorithms = {};
