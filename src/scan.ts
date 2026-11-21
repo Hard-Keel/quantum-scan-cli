@@ -9,9 +9,13 @@ import type { Finding, ScanResult } from "./types.ts";
 
 const MAX_LINE = 2000;
 const DOC_FILE = /\.(md|mdx|rst|txt|html?|adoc)$/i;
-// Test code is full of throwaway keys and passwords. Real token formats (AKIA..., ghp_...) still count there.
-export const TEST_PATH = /(^|\/)(tests?|__tests__|testdata|test-data|testing|fixtures?|spec|specs|mocks?|e2e|integration(?:[-_]?tests?)?|vectors|test[-_]?vectors|[a-z0-9_]+_vectors)\/|(_test\.go|_test\.py|\.(test|spec)\.[cm]?[jt]sx?)$|(^|\/)test_[^/]*\.py$|(^|\/)fixtures?\.[cm]?[jt]sx?$/i;
+// Test code is full of throwaway keys and passwords, including fakes in real token formats, so no secret counts there.
+export const TEST_PATH = /(^|\/)(tests?|__tests__|__snapshots__|testdata|test-data|testing|test[-_]?(?:utils?|helpers?|support|env|suite|fixtures?)|e2e[-_][a-z0-9_-]+|[a-z0-9_-]+[-_]tests?|(?!(?:la|con|at|pro|de)test\/)[a-z0-9]+test|fixtures?|spec|specs|mocks?|e2e|integration(?:[-_]?tests?)?|vectors|test[-_]?vectors|[a-z0-9_]+_vectors)\/|(_test\.go|_test\.py|\.(test|spec)\.[cm]?[jt]sx?)$|(^|\/)test[-_][^/]*$|(^|\/)testing[-_]?utils?\.[a-z]+$|(^|\/)fixtures?\.[cm]?[jt]sx?$/i;
 // Example and tutorial code, which is documentation in code form.
+// Translation files: "password" and "token" there are labels shown to people.
+export const LOCALE_PATH = /(^|\/)(locales?|i18n|l10n|translations?|nls)\/|\.(po|pot|xliff|xlf|ftl|strings)$/i;
+// Example settings files (.env.example), API specs and docs-site configs (public search keys).
+export const EXAMPLE_FILE = /\.(example|sample|template|tmpl|dist)$|(^|\/)\.env\.(example|sample|template)|(^|\/)(openapi|swagger)[^/]*\.(ya?ml|json)$|(^|\/)docusaurus\.config\.[cm]?[jt]s$|\.stories\.[cm]?[jt]sx?$|(^|\/)\.secrets\.baseline$/i;
 export const EXAMPLE_PATH = /(^|\/)(docs?_src|docs?|examples?|samples?|tutorials?)\//i;
 const LOOSE_SECRET_RULES = new Set(["private-key", "generic-assignment", "db-url-password"]);
 const SKIP_PATH = /(^|\/)(node_modules|vendor|dist|build|\.git|__pycache__|\.venv|venv|target)\//;
@@ -61,9 +65,10 @@ export function scanLines(path: string, lines: { no: number; text: string }[]): 
       // A private-key header only counts when real key material follows it (docs often show "XXXX").
       if (hit.rule.id === "private-key" && !hasKeyMaterial(raw, lines[idx + 1])) continue;
       // Docs are full of example passwords; only specific token formats count there.
-      if (hit.rule.id === "generic-assignment" && DOC_FILE.test(path)) continue;
+      if (hit.rule.id === "generic-assignment" && (DOC_FILE.test(path) || LOCALE_PATH.test(path))) continue;
       if (hit.rule.id === "db-url-password" && DOC_FILE.test(path)) continue;
-      if (LOOSE_SECRET_RULES.has(hit.rule.id) && (TEST_PATH.test(path) || EXAMPLE_PATH.test(path) || DOC_FILE.test(path))) continue;
+      if (TEST_PATH.test(path)) continue;
+      if (LOOSE_SECRET_RULES.has(hit.rule.id) && (EXAMPLE_PATH.test(path) || EXAMPLE_FILE.test(path) || DOC_FILE.test(path))) continue;
       findings.push({
         kind: "secret",
         ruleId: hit.rule.id,

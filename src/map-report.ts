@@ -5,6 +5,13 @@ import { TIER_NOTES, TIER_TITLES, type AreaResult, type MapFinding, type MapStre
 import { toFinding } from "./map-rank.ts";
 import type { PqcSignal } from "./pqc.ts";
 import { gradeSentence, readinessScore, type ReadinessScore } from "./score.ts";
+import type { CloudKeyAdvice } from "./map-cloud-keys.ts";
+import type { PeopleResult } from "./map-people.ts";
+
+export interface MapExtras {
+  cloudKeys: CloudKeyAdvice[];
+  people: (PeopleResult & { answeredAt: string }) | null;
+}
 
 export interface MapReport {
   tool: "hard-keel-quantum-scan";
@@ -18,6 +25,10 @@ export interface MapReport {
   strengths: MapStrength[];
   /** Known leftovers marked as accepted in .quantum-scan-ignore. Listed, but left out of the counts and the score. */
   accepted: MapFinding[];
+  /** Cloud data whose keys the provider holds. Advice: listed, not scored. */
+  cloudKeys: CloudKeyAdvice[];
+  /** People and process checklist, scored on its own. Never part of the anonymized summary. */
+  people: (PeopleResult & { answeredAt: string }) | null;
 }
 
 /** Post-quantum methods already in use count toward the score the same way they do in a code scan. */
@@ -25,9 +36,9 @@ function strengthSignals(strengths: MapStrength[]): PqcSignal[] {
   return strengths.map((s) => ({ algorithm: s.algorithm, use: /DSA/.test(s.algorithm) ? "signature" : "key-establishment", file: s.target, line: 0 }));
 }
 
-const AREA_TITLES: Record<string, string> = { code: "Code and config", web: "Websites and public services", host: "This machine", network: "Internal network", vpn: "VPNs", cloud: "Cloud" };
+const AREA_TITLES: Record<string, string> = { code: "Code and config", web: "Websites and public services", host: "This machine", network: "Network and equipment", vpn: "VPNs", cloud: "Cloud" };
 
-export function buildMapReport(results: AreaResult[], ranked: MapFinding[], version: string, now = new Date(), accepted: MapFinding[] = []): MapReport {
+export function buildMapReport(results: AreaResult[], ranked: MapFinding[], version: string, now = new Date(), accepted: MapFinding[] = [], extras: MapExtras = { cloudKeys: [], people: null }): MapReport {
   const strengths = results.flatMap((r) => r.strengths);
   const counts = { 1: 0, 2: 0, 3: 0, 4: 0 } as Record<Tier, number>;
   for (const f of ranked) counts[f.tier!]++;
@@ -41,11 +52,25 @@ export function buildMapReport(results: AreaResult[], ranked: MapFinding[], vers
     findings: ranked,
     strengths,
     accepted,
+    cloudKeys: extras.cloudKeys,
+    people: extras.people,
   };
 }
 
+export function peopleSentence(p: NonNullable<MapReport["people"]>): string {
+  return `People and process: ${p.inPlace} of ${p.answered} in place (${p.score}/100), answered ${p.answeredAt}.`;
+}
+
+const custodyCount = (r: MapReport, c: CloudKeyAdvice["custody"]) => r.cloudKeys.filter((a) => a.custody === c).length;
+
+/** A grade only means something when at least one place was actually checked. */
+export const nothingChecked = (r: MapReport) => !r.areas.some((a) => a.checked > 0) && !r.findings.length && !r.strengths.length;
+const NOT_GRADED = "Quantum readiness: not graded, because nothing was checked.";
+
 export function mapText(r: MapReport): string {
-  const out = ["Hard Keel Quantum Scan · encryption map", "", gradeSentence(r.score), ""];
+  const out = ["Hard Keel Quantum Scan · encryption map", "", nothingChecked(r) ? NOT_GRADED : gradeSentence(r.score)];
+  if (r.people) out.push(peopleSentence(r.people));
+  if (r.areas.length) out.push("");
   for (const a of r.areas) {
     const bits = [`${a.checked} checked`];
     if (a.skipped.length) bits.push(`${a.skipped.length} skipped`);
@@ -53,7 +78,7 @@ export function mapText(r: MapReport): string {
     out.push(`  ${AREA_TITLES[a.area] ?? a.area}: ${bits.join(", ")}`);
   }
   const total = r.findings.length;
-  out.push("", total ? `${total} finding${total === 1 ? "" : "s"}, ranked by what breaks first.` : "Nothing found in the areas checked.");
+  out.push("", total ? `${total} finding${total === 1 ? "" : "s"}, ranked by what breaks first.` : nothingChecked(r) ? "No scan areas were checked this time." : "Nothing found in the areas checked.");
   for (const t of [1, 2, 3, 4] as Tier[]) {
     const list = r.findings.filter((f) => f.tier === t);
     if (!list.length) continue;
@@ -64,6 +89,18 @@ export function mapText(r: MapReport): string {
   if (r.strengths.length) {
     out.push("", `Already quantum-safe (${r.strengths.length})`);
     for (const s of r.strengths.slice(0, 10)) out.push(`   ${s.target}  ${s.title}`);
+  }
+  if (r.cloudKeys.length) {
+    const prov = custodyCount(r, "provider");
+    out.push("", `Who can read your cloud data (${r.cloudKeys.length}), advice, not scored`);
+    out.push(`   ${prov} with keys the provider holds, ${r.cloudKeys.length - prov} with keys in the provider's key service.`);
+    for (const a of r.cloudKeys.slice(0, 10)) out.push(`   ${a.target}  ${a.resource}: ${a.title}`);
+    if (r.cloudKeys.length > 10) out.push(`   ...and ${r.cloudKeys.length - 10} more in the report.`);
+    out.push(`   ${r.cloudKeys.find((a) => a.custody === "provider")?.fix ?? r.cloudKeys[0].fix}`);
+  }
+  if (r.people?.gaps.length) {
+    out.push("", `People and process gaps (${r.people.gaps.length})`);
+    for (const g of r.people.gaps.slice(0, 12)) out.push(`   ${g.answer === "no" ? "No" : "Not sure"}: ${g.question}`, `      ${g.fix}`);
   }
   if (r.accepted.length) {
     out.push("", `Accepted as known leftovers (${r.accepted.length}), from ${".quantum-scan-ignore"}; not counted in the score`);
@@ -102,6 +139,17 @@ export function mapHtml(r: MapReport, activity: string[]): string {
   const accepted = r.accepted.length
     ? `<section><h2>Accepted as known leftovers <span class="count">${r.accepted.length}</span></h2><p class="note">Marked in .quantum-scan-ignore. Listed here so nothing is hidden, but left out of the counts and the score.</p>${table(r.accepted)}</section>`
     : "";
+  const cloud = r.cloudKeys.length
+    ? `<section><h2>Who can read your cloud data <span class="count">${r.cloudKeys.length}</span></h2><p class="note">Advice, not scored. Keys held by a cloud provider protect against a stolen disk, not against the provider, someone working there, or a legal demand made to them. ${custodyCount(r, "provider")} ${custodyCount(r, "provider") === 1 ? "uses" : "use"} keys the provider holds; ${custodyCount(r, "provider-kms")} ${custodyCount(r, "provider-kms") === 1 ? "uses" : "use"} keys in the provider's key service.</p><table><thead><tr><th>Where</th><th>What and how to fix it</th></tr></thead><tbody>${r.cloudKeys.map((a) => `<tr><td class="mono">${esc(a.target)}<div class="fix">${esc(a.resource)}</div></td><td>${esc(a.title)}<div class="fix">${esc(a.fix)}</div></td></tr>`).join("")}</tbody></table></section>`
+    : "";
+  const p = r.people;
+  const people = p
+    ? `<section><h2>People and process <span class="count">${p.inPlace} of ${p.answered} in place</span></h2><p class="note">Your own answers from ${esc(p.answeredAt)}, scored on their own. They stay on this machine and are never shared.</p>${
+        p.gaps.length
+          ? `<table><thead><tr><th class="area">Group</th><th>Answer</th><th>Question and what to do</th></tr></thead><tbody>${p.gaps.map((g) => `<tr><td class="area">${esc(g.group)}</td><td>${g.answer === "no" ? "No" : "Not sure"}</td><td>${esc(g.question)}<div class="fix">${esc(g.fix)}</div></td></tr>`).join("")}</tbody></table>`
+          : "<p>Everything you answered is in place.</p>"
+      }</section>`
+    : "";
   const areas = r.areas
     .map((a) => {
       const extra = [...a.skipped.map((s) => `${s.target}: ${s.reason}`), ...a.errors.map((e) => `${e.target}: couldn't check (${e.message})`)];
@@ -134,10 +182,13 @@ details{margin-top:40px}pre{white-space:pre-wrap;font-size:12px;color:var(--mute
 </style></head><body><main>
 <div class="eyebrow">Hard Keel Quantum Scan</div><h1>Encryption map</h1>
 <p class="muted">Created ${esc(r.createdAt.slice(0, 16).replace("T", " "))} UTC on this machine. This report stays on your computer unless you share it.</p>
-<div class="score"><div class="grade ${gradeClass}">${esc(g.grade)}</div><div><strong>Quantum readiness ${g.score}/100</strong><div class="muted">${esc(gradeSentence(g).replace(/^Quantum readiness: [^.]+\.\s*/, ""))} Hard Keel method v${esc(g.method)}, the same as a code scan, across every area checked.</div></div></div>
+${nothingChecked(r) ? `<div class="score"><div class="grade">–</div><div><strong>Quantum readiness not graded</strong><div class="muted">Nothing was checked, so there is nothing to grade.</div></div></div>` : `<div class="score"><div class="grade ${gradeClass}">${esc(g.grade)}</div><div><strong>Quantum readiness ${g.score}/100</strong><div class="muted">${esc(gradeSentence(g).replace(/^Quantum readiness: [^.]+\.\s*/, ""))} Hard Keel method v${esc(g.method)}, the same as a code scan, across every area checked.</div></div></div>`}
+${p ? `<div class="score"><div class="grade ${p.score >= 90 ? "good" : p.score >= 60 ? "ok" : "bad"}">${p.score}</div><div><strong>People and process ${p.inPlace} of ${p.answered} in place</strong><div class="muted">From your answers to the checklist, scored on their own. Phishing, accounts, equipment, separation, data and what happens on a bad day.</div></div></div>` : ""}
 <div class="tiles">${summary}</div>
 ${tiers || "<p>Nothing found in the areas checked.</p>"}
 ${strengths}
+${cloud}
+${people}
 ${accepted}
 <section><h2>What was checked</h2><ul>${areas}</ul></section>
 <details><summary>Activity log (${activity.length} entries)</summary><pre>${esc(activity.join("\n"))}</pre></details>

@@ -18,7 +18,11 @@ import { emptyResult, type MapFinding } from "../src/map-types.ts";
 import { acceptsSuites, certFindings, checkProof, checkTls, clientHello, handshake, runWeb, serverHelloSuite, SUITES_3DES, type Handshake } from "../src/map-web.ts";
 import { loadSettings } from "../src/share-config.ts";
 import { walkFolder } from "../src/walk.ts";
+import { cloudKeyAdvice } from "../src/map-cloud-keys.ts";
+import { deviceFindings, machineRanges, readUpnp, runNetwork, suggestedRanges, type NetIO } from "../src/map-network.ts";
+import { scorePeople } from "../src/map-people.ts";
 import type { Finding } from "../src/types.ts";
+import { scanFile } from "../src/scan.ts";
 
 const dnsError = (code: string) => Object.assign(new Error(code), { code });
 const TOKEN = "a".repeat(24);
@@ -214,4 +218,152 @@ test("tls: real OpenSSL accepts the hand-built hello", { skip: !certDir && "need
   } finally {
     srv.close();
   }
+});
+
+// ---------- pass 2 (0.3.0): network, cloud keys, people ----------
+
+const quietNet = (cidr: string, seen: Set<string> = new Set()): NetIO => ({
+  interfaces: () => [{ address: cidr.split("/")[0], cidr }],
+  probe: async (h) => (seen.add(h), "timeout"),
+  http: async () => null,
+  cert: async () => null,
+  upnp: async () => null,
+  sleep: async () => {},
+});
+
+test("QA-16: a computer on a /16 can check the /24 it's on, and is offered it", async () => {
+  const io = quietNet("10.20.30.40/16");
+  assert.equal(machineRanges(io).length, 1);
+  assert.deepEqual(suggestedRanges(io), ["10.20.30.0/24"]);
+  const seen = new Set<string>();
+  const r = await runNetwork({ ranges: ["10.20.30.0/28"] }, new ActivityLog(), { io: quietNet("10.20.30.40/16", seen), gapMs: 0 });
+  assert.equal(r.skipped.length, 0);
+  assert.equal(seen.size, 14);
+  assert.deepEqual(suggestedRanges(quietNet("192.168.1.50/24")), ["192.168.1.0/24"]);
+  assert.deepEqual(suggestedRanges(quietNet("192.168.1.50/28")), ["192.168.1.48/28"]);
+  assert.deepEqual(suggestedRanges(quietNet("100.64.1.2/10")), [], "carrier-grade or public ranges aren't offered");
+});
+
+test("QA-17: router forwards are fetched only from a plain address inside the approved ranges", async () => {
+  let hits = 0;
+  const srv = netServer((c) => (hits++, c.end()));
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  const port = (srv.address() as { port: number }).port;
+  try {
+    const out = await readUpnp(`http://127.0.0.1:${port}/rootDesc.xml`, () => false);
+    assert.ok(out.outside);
+    assert.ok((await readUpnp("http://router.example/rootDesc.xml", () => true)).outside);
+    assert.ok((await readUpnp("not a url", () => true)).outside);
+    assert.equal(hits, 0);
+  } finally {
+    srv.close();
+  }
+  // And runNetwork hands the approved ranges to the reader, then checks again.
+  let asked: ((h: string) => boolean) | undefined;
+  const io = { ...quietNet("192.168.1.50/24"), upnp: async (allowed: (h: string) => boolean) => ((asked = allowed), { host: "192.168.9.1", mappings: [] }) };
+  const r = await runNetwork({ ranges: ["192.168.1.0/30"] }, new ActivityLog(), { io, gapMs: 0 });
+  assert.ok(asked && asked("192.168.1.1") && !asked("192.168.9.1"));
+  assert.match(r.skipped.map((s) => s.reason).join(" "), /outside the approved ranges/);
+});
+
+test("QA-18: port 2375 is only an open Docker API when it says it's Docker", () => {
+  const ids = (server?: string) => deviceFindings({ ip: "192.168.1.9", open: [2375], pages: server === undefined ? [] : [{ port: 2375, tls: false, page: { status: 404, server } }] }).findings.map((f) => `${f.ruleId}:${f.severity}`);
+  assert.deepEqual(ids("Docker/27.3.1 (linux)"), ["net-docker-api:critical"]);
+  assert.deepEqual(ids("nginx"), ["net-docker-port:medium"]);
+  assert.deepEqual(ids(), ["net-docker-port:medium"]);
+});
+
+test("QA-19 and QA-20: cloud keys read CloudFormation in either order, and customer-supplied Google disk keys count as yours", () => {
+  const cfn = (a: string, b: string) => `AWSTemplateFormatVersion: "2010-09-09"\nResources:\n  B:\n    Type: AWS::S3::Bucket\n    Properties:\n      BucketEncryption:\n        ServerSideEncryptionConfiguration:\n          - ServerSideEncryptionByDefault:\n              ${a}\n              ${b}\n`;
+  assert.equal(cloudKeyAdvice("t.yaml", cfn("KMSMasterKeyID: !Ref Key", "SSEAlgorithm: aws:kms"))[0].custody, "provider-kms");
+  assert.equal(cloudKeyAdvice("t.yaml", cfn("SSEAlgorithm: aws:kms", "KMSMasterKeyID: !Ref Key"))[0].custody, "provider-kms");
+  assert.equal(cloudKeyAdvice("t.yaml", cfn("SSEAlgorithm: AES256", "BucketKeyEnabled: true"))[0].custody, "provider");
+  const tf = 'resource "google_compute_disk" "a" {\n  disk_encryption_key {\n    raw_key = var.k\n  }\n}\nresource "google_compute_disk" "b" {\n  size = 10\n}\n';
+  assert.deepEqual(cloudKeyAdvice("main.tf", tf).map((a) => a.resource), ["google_compute_disk.b"]);
+});
+
+test("QA-21: the address limit says which addresses were left out and what to do", async () => {
+  const r = await runNetwork({ ranges: [], routed: ["10.20.0.0/20"] }, new ActivityLog(), { io: quietNet("192.168.1.50/24"), gapMs: 0 });
+  const s = r.skipped.find((x) => /first 1,024/.test(x.reason))!;
+  assert.equal(s.target, "3,070 addresses from 10.20.4.1 on");
+});
+
+test("QA-22 and QA-23: cloud key counts read naturally, and a 'no' comes before a 'not sure' of the same weight", () => {
+  const html = mapHtml(buildMapReport([emptyResult("code")], [], "0.3.0", new Date(), [], { cloudKeys: cloudKeyAdvice("main.tf", 'resource "aws_db_instance" "x" {\n  storage_encrypted = true\n}\n'), people: null }), []);
+  assert.match(html, /1 uses keys the provider holds; 0 use keys/);
+  const p = scorePeople({ backups: "unsure", "incident-plan": "no", mfa: "unsure", "verify-requests": "no" })!;
+  assert.deepEqual(p.gaps.map((g) => g.answer), ["no", "no", "unsure", "unsure"]);
+});
+
+test("QA-26: a map where nothing was checked isn't given a grade", () => {
+  const people = { answeredAt: "2026-11-20", ...scorePeople({ mfa: "no", backups: "yes" })! };
+  const none = buildMapReport([], [], "0.3.0", new Date(), [], { cloudKeys: [], people });
+  assert.match(mapText(none), /not graded, because nothing was checked/);
+  assert.doesNotMatch(mapText(none), /A \(100\/100/);
+  assert.match(mapHtml(none, []), /Quantum readiness not graded/);
+  const web = { ...emptyResult("web"), skipped: [{ target: "example.com", reason: "domain not proved" }] };
+  assert.match(mapText(buildMapReport([web], [], "0.3.0")), /not graded/);
+  const code = { ...emptyResult("code"), checked: ["repo (3 files)"] };
+  assert.match(mapText(buildMapReport([code], [], "0.3.0")), /Quantum readiness: A\+? \(100\/100/);
+});
+
+// ---------- QA-27: Go TLS curve lists that turn off the post-quantum default ----------
+
+test("QA-27: a Go TLS curve list without ML-KEM is flagged, and one that keeps the hybrid group isn't", () => {
+  const only = scanFile("gateway/server.go", "cfg := &tls.Config{\n\tCurvePreferences: []tls.CurveID{tls.X25519, tls.CurveP256},\n}\n");
+  assert.deepEqual(only.map((f) => [f.line, f.algorithm]), [[2, "X25519"]]);
+  const hybrid = scanFile("gateway/server.go", "\tCurvePreferences: []tls.CurveID{tls.X25519MLKEM768, tls.X25519},\n");
+  assert.equal(hybrid.length, 0);
+});
+
+// ---------- QA-28: AWS's published sample key is skipped on purpose ----------
+
+test("QA-28: AWS's documented sample access key isn't reported as leaked, but a made-up one is", () => {
+  const sample = "AKIA" + "IOSFODNN7" + "EXAMPLE";
+  const madeUp = "AKIA" + "Q7R2HB4KZT5WN3XD";
+  assert.equal(scanFile("app/settings.py", `AWS_ACCESS_KEY_ID = "${sample}"\n`).length, 0);
+  assert.equal(scanFile("app/settings.py", `AWS_ACCESS_KEY_ID = "${madeUp}"\n`).filter((f) => f.risk === "secret").length, 1);
+});
+
+// ---------- QA-29: false leaked-key alarms found by the 100-project re-scan ----------
+
+test("QA-29: translated labels, editor token names and Go-style test folders aren't leaked keys", () => {
+  const secrets = (path: string, text: string) => scanFile(path, text).filter((f) => f.risk === "secret");
+  // A translated "Password" label in a language file, and the same shape anywhere else.
+  assert.equal(secrets("src/node/i18n/locales/ja.json", '  "LOGIN_PASSWORD": "パスワードを入力してください。設定ファイルを確認",\n').length, 0);
+  assert.equal(secrets("src/strings.json", '  "INCORRECT_PASSWORD": "รหัสผ่านไม่ถูกต้องกรุณาลองอีกครั้ง",\n').length, 0);
+  assert.equal(secrets("app/locales/de.yml", '  password_hint: "Kennwort2024MindestensZwölf"\n').length, 0);
+  // A syntax highlighter's token names.
+  assert.equal(secrets("js/editor.js", "  { token: 'excludedRequestDomains:', after: ' ' },\n").length, 0);
+  // Test keys in a Go-style test folder (caddytest/, httptest/, testutil/).
+  const key = "-----BEGIN " + "PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\n";
+  assert.equal(secrets("caddytest/caddy.localhost.key", key).length, 0);
+  assert.equal(secrets("internal/testutil/key.pem", key).length, 0);
+  assert.equal(secrets("deploy/tls.key", key).length, 1);
+  // Folders that only end in "test" are still real code.
+  assert.equal(secrets("latest/key.pem", key).length, 1);
+  // Fakes in real token formats inside test files, and Java-style test fixtures.
+  assert.equal(secrets("src/__tests__/redact.test.ts", "  token: 'xoxb-" + "2" + "4".repeat(11) + "-abcDEF123ghiJKL',\n").length, 0);
+  assert.equal(secrets("module/web/src/testFixtures/resources/test-key.pem", key).length, 0);
+  assert.equal(secrets("packages/e2e-auth-server/keys.ts", key).length, 0);
+  // Local databases, example settings files, API specs and secret-store references.
+  assert.equal(secrets(".github/workflows/ci.yml", "  DATABASE_URL: postgresql://app:" + "Ci7pass" + "word9@localhost:5432/app\n").length, 0);
+  assert.equal(secrets("app/settings.py", 'DATABASE_URL = "postgres://app:' + "Pr0dPass" + 'Word77@db.internal:5432/app"\n').length, 1);
+  assert.equal(secrets("server/.env.example", 'API_TOKEN="' + "a1b2c3d4" + 'e5f6a7b8c9"\n').length, 0);
+  assert.equal(secrets("api/openapi.yaml", '  JoinToken: "SWMTKN-1-' + "3pu6hszjas19xyp7gh" + 'x1"\n').length, 0);
+  assert.equal(secrets("infra/ddns.tf", '  CLOUDFLARE_API_TOKEN = "bao:secret/' + "cloudflare" + '1#token"\n').length, 0);
+  // Names that describe a token rather than hold one.
+  assert.equal(secrets("api/repo.py", '_ACCESS_TOKEN_KEY = "oauth_server:' + "access_token" + ':v2"\n').length, 0);
+  assert.equal(secrets("tools/load.py", 'tokenizer_id = "google/paligemma2' + '-3b-pt-224"\n').length, 0);
+  // A public client key is safe to ship.
+  assert.equal(secrets("telemetry.py", "POSTHOG_API_KEY = 'phc_" + "q8Zr2Lk9Xw4Tn7Vb" + "3Hj5Pm1Rs6'\n").length, 0);
+  // A detect-secrets baseline, a Storybook story, a test package, a CSS design token, a Dockerfile cache folder.
+  assert.equal(secrets(".secrets.baseline", '      "hashed_secret": "665b1' + "a9c3e7f" + '20d4b8e61",\n').length, 0);
+  assert.equal(secrets("src/CopyInput.stories.ts", "const INITIAL_TOKEN = 'n8n_" + "q8Zr2Lk9Xw4Tn7Vb" + "';\n").length, 0);
+  assert.equal(secrets("packages/bruno-tests/src/auth.js", key).length, 0);
+  assert.equal(secrets("src/styles.vue", "  { name: '2xs', token: 'var(--shadow" + "-2xs-1)' },\n").length, 0);
+  assert.equal(secrets("api/Dockerfile", "ENV TIKTOKEN_CACHE_DIR=/app/api/" + "tiktoken2\n").length, 0);
+  // Real-looking values still count.
+  assert.equal(secrets("app/config.py", 'API_KEY = "' + "q8Zr2Lk9" + "Xw4Tn7Vb" + '"\n').length, 1);
+  assert.equal(secrets("app/config.py", 'SECRET_TOKEN = "' + "QwErTyUiOpAsDfGh" + "JkLzXcVbNmQwErTyU" + '"\n').length, 1);
 });

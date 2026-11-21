@@ -15,7 +15,7 @@ export interface AreaCard {
 
 const list = (t: string[]) => (t.length <= 4 ? t.join(", ") : `${t.slice(0, 3).join(", ")} and ${t.length - 3} more`);
 
-export const CARDS: Record<"code" | "web" | "host", AreaCard> = {
+export const CARDS: Record<"code" | "web" | "host" | "network", AreaCard> = {
   code: {
     area: "code",
     title: "Code and config",
@@ -31,6 +31,15 @@ export const CARDS: Record<"code" | "web" | "host", AreaCard> = {
     read: "the encryption each one offers when connecting, the same handshake a browser makes, and its certificate. For SSH addresses, the settings the server announces before any login.",
     never: "log in, test for vulnerabilities, send attack traffic, or touch any address you haven't proved.",
     cost: "About 6 connections per address, one at a time.",
+  },
+  network: {
+    area: "network",
+    title: "Network and connected equipment",
+    touch: (t) => `the addresses in ${list(t)}: private ranges on your own network only, at most 1,024 addresses.`,
+    read: "which of about 30 common ports answer on each device, the title of any web page they serve, the certificate on secure admin pages, and the router's list of automatic port forwards (UPnP), if it publishes one.",
+    never: "log in, try a password, send commands to equipment, change a setting, or touch any address outside these ranges.",
+    cost: "One connection at a time per device, a few a second. Usually a few minutes.",
+    warning: "Some older industrial, medical or building controllers can misbehave even when gently connected to. List any under exclude in the scope file, or answer no and skip this area.",
   },
   host: {
     area: "host",
