@@ -64,7 +64,7 @@ test("QA-2: the map report carries the method v1 score, with credit for quantum-
   assert.equal(r.score.grade, "A");
   assert.equal(r.score.pqc.keyExchange, true);
   assert.match(mapText(r), /^Hard Keel Quantum Scan · encryption map\n\nQuantum readiness: A/);
-  assert.match(mapHtml(r, []), /Quantum readiness \d+\/100/);
+  assert.match(mapHtml(r, []).replace(/<[^>]+>/g, ""), /Quantum readiness \d+\/100/);
 });
 
 // ---------- QA-3: one unreadable folder doesn't stop the scan ----------
@@ -195,12 +195,73 @@ test("QA-9 and QA-10: an expired certificate isn't also called untrusted, and MD
 
 // ---------- the HTML report reads in light mode and on paper ----------
 
-test("report: the HTML has light, dark and print styles and hides the area column on phones", () => {
+test("report: the HTML has light, dark, phone and print styles", () => {
   const html = mapHtml(buildMapReport([emptyResult("code")], [], "0.2.0"), []);
   assert.match(html, /prefers-color-scheme:dark/);
   assert.match(html, /@media print/);
-  assert.match(html, /max-width:640px\)\{\.area\{display:none\}/);
+  assert.match(html, /max-width:640px\)\{main\{padding/);
   assert.ok(!/\bcrypto\b/i.test(html.replace(/<style>[\s\S]*?<\/style>/, "")));
+});
+
+// ---------- 0.3.1: a branded report you can hand to someone ----------
+
+const finding = (target: string, o: Partial<MapFinding> = {}): MapFinding => ({ area: "network", target, ruleId: "net-rdp", title: "Remote Desktop is open on the network", algorithm: "Remote Desktop open", primitive: "protocol", risk: "exposed", severity: "high", fix: "Allow Remote Desktop only through a VPN.", internetFacing: false, ...o });
+
+test("report 0.3.1: branded, self-contained and printable", () => {
+  const net = { ...emptyResult("network"), checked: ["10.0.0.5", "10.0.0.6"], findings: [finding("10.0.0.5:3389"), finding("10.0.0.6:3389")] };
+  const html = mapHtml(buildMapReport([net], rank(net.findings), "0.3.1"), []);
+  assert.match(html, /<svg class="logo"[^>]*aria-label="Hard Keel"/);
+  assert.match(html, /--teal:#5aa99d/);
+  // The rings are teal in the SVG itself, not through a CSS variable that SVG attributes ignore, and print in color.
+  const logo = html.match(/<svg class="logo"[\s\S]*?<\/svg>/)![0];
+  assert.ok(!/var\(/.test(logo));
+  assert.match(logo, /stroke="#5aa99d"/);
+  assert.match(logo, /fill="#5aa99d"/);
+  assert.match(html, /\.logo\{[^}]*print-color-adjust:exact/);
+  assert.match(html, /@page\{size:letter/);
+  assert.match(html, /counter\(page\)/);
+  assert.match(html, /Save as PDF/);
+  assert.match(html, /Start here/);
+  // Nothing loads from the web: no external scripts, styles, fonts or images.
+  assert.ok(!/<(script|link|img)\b[^>]*\b(src|href)=["']?https?:/i.test(html));
+  assert.ok(!/url\(\s*["']?https?:/i.test(html));
+  assert.ok(!/@import/i.test(html));
+  // The same problem in two places reads as one item with both places.
+  assert.equal(html.match(/<article class="item">/g)?.length, 1);
+  assert.match(html, /2 places/);
+  assert.match(html, /10\.0\.0\.5:3389[\s\S]*10\.0\.0\.6:3389/);
+});
+
+test("report 0.3.1: places are escaped and capped", () => {
+  const many = Array.from({ length: 45 }, (_, i) => finding(`10.0.0.${i}:3389`));
+  many.push(finding("<b>x</b>:1"));
+  const net = { ...emptyResult("network"), checked: ["x"], findings: many };
+  const html = mapHtml(buildMapReport([net], rank(net.findings), "0.3.1"), []);
+  assert.ok(!html.includes("<b>x</b>"));
+  assert.match(html, /and 6 more, listed in map\.json/);
+});
+
+test("map 0.3.1: prints the report path and opens it only on yes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "qs-open-"));
+  mkdirSync(join(dir, "app"));
+  writeFileSync(join(dir, "app", "a.js"), "const h = require('crypto').createHash('md5');\n");
+  writeFileSync(join(dir, "scope.json"), JSON.stringify({ version: 1, areas: { code: { folders: ["app"] } } }));
+  const base = { scopePath: join(dir, "scope.json"), cwd: dir, version: "0.3.1", settings: loadSettings(join(dir, "s.json")), sharingOn: false, interactive: true, write: () => {} };
+  const opened: string[] = [];
+  const prompter = (answer: string) => () => ({ ask: async () => answer, close: () => {} });
+  const out: string[] = [];
+  const orig = process.stdout.write.bind(process.stdout);
+  (process.stdout as { write: unknown }).write = (t: string) => (out.push(String(t)), true);
+  try {
+    await runMap({ ...base, outDir: join(dir, "m1"), offerOpen: true, prompter: prompter("n"), opener: (p) => opened.push(p) });
+    assert.equal(opened.length, 0);
+    await runMap({ ...base, outDir: join(dir, "m2"), offerOpen: true, prompter: prompter("y"), opener: (p) => opened.push(p) });
+    await runMap({ ...base, outDir: join(dir, "m3"), offerOpen: false, prompter: prompter("y"), opener: (p) => opened.push(p) });
+  } finally {
+    (process.stdout as { write: unknown }).write = orig;
+  }
+  assert.deepEqual(opened, [join(dir, "m2", "map.html")]);
+  assert.match(out.join(""), /Your report: .*m1[\\/]map\.html\nOpen it in a browser\. For a PDF, choose Print, then Save as PDF\./);
 });
 
 // ---------- a real handshake still works end to end ----------

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- **A report you can hand to someone.** `map.html` is now a clean, branded report: the grade up top, a short "Start here" list, findings ranked by what breaks first with how to fix each one, and the same problem in many places shown once with its list of places. It prints well, with page numbers, so your browser's Save as PDF gives a ready PDF. Still one file, with no web fonts or scripts from anywhere else, so it works offline.
+- At the end of `quantum-scan map`, the tool prints where the report is and, in a terminal, offers to open it.
+
 ## 0.3.0
 
 New in `quantum-scan map`:

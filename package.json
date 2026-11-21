@@ -1,6 +1,6 @@
 {
   "name": "@hardkeel/quantum-scan",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Finds encryption quantum computers will break, weak encryption, exposed infrastructure settings and leaked keys in code and infrastructure config. Writes an encryption inventory (CycloneDX CBOM) and a migration plan.",
   "license": "Apache-2.0",
   "author": "Hard Keel (https://hardkeel.com)",

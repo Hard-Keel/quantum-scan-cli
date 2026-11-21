@@ -3,6 +3,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { applyIgnore, applyIgnoreTargets, IGNORE_FILE, parseIgnore } from "./ignore.ts";
 import { buildCbom } from "./cbom.ts";
@@ -70,6 +71,18 @@ export interface Prompter {
 export function terminalPrompter(): Prompter {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   return { ask: (q) => rl.question(q), close: () => rl.close() };
+}
+
+/** Opens a file with the system's default app. Best effort: a failure leaves the path printed above. */
+export function openFile(path: string): void {
+  const [cmd, args] = process.platform === "win32" ? ["explorer.exe", [path]] : process.platform === "darwin" ? ["open", [path]] : ["xdg-open", [path]];
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // Nothing to do: the path is already on screen.
+  }
 }
 
 const yes = (a: string) => /^\s*y(es)?\s*$/i.test(a);
@@ -142,6 +155,9 @@ export interface MapOptions {
   web?: Omit<WebOptions, "token">;
   hostIO?: HostIO;
   network?: NetworkOptions;
+  /** Ask whether to open the report at the end. Defaults to on in a terminal, off in CI. */
+  offerOpen?: boolean;
+  opener?: (path: string) => void;
 }
 
 export const PEOPLE_FILE = "people.json";
@@ -280,7 +296,16 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
   writeFileSync(join(o.outDir, "map.json"), JSON.stringify(report, null, 2) + "\n");
   writeFileSync(join(o.outDir, "map.html"), mapHtml(report, log.entries));
   writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }), null, 2) + "\n");
-  process.stdout.write(mapText(report) + `\n\nWrote ${join(o.outDir, "map.html")}, map.json, map.cbom.json and activity.log. They stay on this machine.\n`);
+  const reportPath = resolve(o.outDir, "map.html");
+  process.stdout.write(mapText(report) + `\n\nYour report: ${reportPath}\nOpen it in a browser. For a PDF, choose Print, then Save as PDF.\nAlso wrote map.json, map.cbom.json and activity.log. They stay on this machine.\n`);
+  if (o.offerOpen ?? (o.interactive && Boolean(process.stdout.isTTY) && !process.env.CI)) {
+    const p = (o.prompter ?? terminalPrompter)();
+    try {
+      if (yes(await p.ask("\nOpen the report now? (y/N) "))) (o.opener ?? openFile)(reportPath);
+    } finally {
+      p.close();
+    }
+  }
 
   // Counts for the anonymized summary. Targets never leave this function.
   const rules: Record<string, number> = {};
