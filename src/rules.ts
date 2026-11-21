@@ -114,6 +114,8 @@ export const CRYPTO_RULES: CryptoRule[] = [
   { id: "go-dsa", langs: ["go"], pattern: /\bdsa\.GenerateKey\s*\(/, algorithm: "DSA" },
   { id: "go-weak-hash", langs: ["go"], pattern: /\b(md5|sha1)\.(?:New|Sum)\s*\(/, algorithm: (m) => hashOrCipher(m[1]) },
   { id: "go-weak-cipher", langs: ["go"], pattern: /\bdes\.(NewCipher|NewTripleDESCipher)\s*\(|\brc4\.NewCipher\s*\(/, algorithm: (m) => (m[1] === "NewTripleDESCipher" ? "3DES" : m[1] ? "DES" : "RC4") },
+  // A TLS curve list that leaves out the hybrid ML-KEM group turns off Go's post-quantum default (Go 1.24+).
+  { id: "go-tls-curves", langs: ["go"], pattern: /(?<!MLKEM.*)\btls\.(X25519|CurveP256|CurveP384|CurveP521)\b(?!.*MLKEM)/, algorithm: (m) => (m[1] === "X25519" ? "X25519" : "ECDH") },
   { id: "go-tls-old", langs: ["go"], pattern: /\bMinVersion\s*:\s*tls\.VersionTLS1[01]\b/, algorithm: "TLS 1.0/1.1" },
 
   // ---------- Java / Kotlin ----------

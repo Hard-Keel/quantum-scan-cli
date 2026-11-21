@@ -282,7 +282,7 @@ export function scanInfra(path: string, lines: Line[]): Finding[] {
     }
     if (type === "docker") {
       const env = t.match(/^\s*(?:ENV|ARG)\s+([A-Za-z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]*)(?:=|\s+)["']?([^\s"'$]{8,})["']?/i);
-      if (env && !PLACEHOLDER.test(env[2]) && !/_(FILE|PATH|URL|NAME|URI)$/i.test(env[1])) add(secretHit(line, env[2]));
+      if (env && !PLACEHOLDER.test(env[2]) && !/_(FILE|PATH|URL|NAME|URI|DIR|HOME)$/i.test(env[1]) && !/^(\/|\.{1,2}\/|~\/)/.test(env[2])) add(secretHit(line, env[2]));
     }
 
     // --- Kubernetes ---

@@ -12,6 +12,9 @@ import { runHost, type HostIO } from "./map-host.ts";
 import { fromCodeFinding, rank, toFinding } from "./map-rank.ts";
 import { buildMapReport, mapHtml, mapText, type MapReport } from "./map-report.ts";
 import { emptyResult, type AreaResult, type MapFinding } from "./map-types.ts";
+import { cloudKeyAdvice, type CloudKeyAdvice } from "./map-cloud-keys.ts";
+import { isPrivateRange, machineRanges, parseRange, realNetIO, runNetwork, suggestedRanges, type NetIO, type NetworkOptions, type NetworkScope } from "./map-network.ts";
+import { askPeople, parseAnswers, QUESTIONS, scorePeople, type Answer } from "./map-people.ts";
 import { proofRecord, runWeb, type WebOptions } from "./map-web.ts";
 import { scanFiles } from "./scan.ts";
 import type { AreaName, ErrorKind, RunFacts } from "./share.ts";
@@ -28,7 +31,10 @@ export interface Scope {
     code?: { folders: string[] };
     web?: { targets: string[] };
     host?: Record<string, never>;
+    network?: NetworkScope;
   };
+  /** Optional answers to the people and process checklist. Usually kept in the map folder instead. */
+  people?: { answers: Record<string, Answer> };
 }
 
 export function parseScope(text: string): Scope | { error: string } {
@@ -45,7 +51,12 @@ export function parseScope(text: string): Scope | { error: string } {
   if (v.areas.code) s.areas.code = { folders: strings(v.areas.code.folders) };
   if (v.areas.web) s.areas.web = { targets: strings(v.areas.web.targets) };
   if (v.areas.host) s.areas.host = {};
-  const known = new Set(["code", "web", "host"]);
+  if (v.areas.network) {
+    const n = v.areas.network;
+    s.areas.network = { ranges: strings(n.ranges).slice(0, 16), routed: strings(n.routed).slice(0, 16), exclude: strings(n.exclude).slice(0, 256) };
+  }
+  if (v.people?.answers) s.people = { answers: parseAnswers(v.people.answers) };
+  const known = new Set(["code", "web", "host", "network"]);
   const unknown = Object.keys(v.areas).filter((k) => !known.has(k));
   if (unknown.length) return { error: `this version can't check: ${unknown.join(", ")}` };
   return s;
@@ -64,7 +75,7 @@ export function terminalPrompter(): Prompter {
 const yes = (a: string) => /^\s*y(es)?\s*$/i.test(a);
 
 /** Walks through each area with its card. The answer is no unless the person types yes. */
-export async function askScope(p: Prompter, cwd: string, write: (t: string) => void): Promise<Scope> {
+export async function askScope(p: Prompter, cwd: string, write: (t: string) => void, netIO: NetIO = realNetIO): Promise<Scope> {
   const scope: Scope = { version: 1, created: new Date().toISOString().slice(0, 10), areas: {} };
   write("\nI'll go through each area, say what it does, and ask first. Press Enter to skip any of them.\n\n");
 
@@ -77,6 +88,30 @@ export async function askScope(p: Prompter, cwd: string, write: (t: string) => v
   if (targets.length) {
     write("\n" + cardText(CARDS.web, targets) + "\n");
     if (yes(await p.ask("Check these addresses? (y/N) "))) scope.areas.web = { targets };
+  }
+
+  write("\n");
+  const sugg = suggestedRanges(netIO);
+  const rawNet = await p.ask(`Network and connected equipment: list your private address ranges${sugg.length ? ` (this computer is on ${sugg.join(", ")})` : " (e.g. 192.168.1.0/24)"}, or press Enter to skip:\n> `);
+  const asked = rawNet.split(/[\s,]+/).filter(Boolean);
+  if (asked.length) {
+    const mine = machineRanges(netIO);
+    const ranges: string[] = [];
+    const routed: string[] = [];
+    for (const raw of asked) {
+      const r = parseRange(raw);
+      if ("error" in r || !isPrivateRange(r)) {
+        write(`  Skipping ${raw}: ${"error" in r ? r.error : "only private address ranges can be checked"}.\n`);
+        continue;
+      }
+      if (mine.some((m) => r.start >= m.start && r.end <= m.end)) ranges.push(raw);
+      else if (yes(await p.ask(`  This computer isn't on ${raw}. Is it another part of your own network, reached through your router? (y/N) `))) routed.push(raw);
+    }
+    const all = [...ranges, ...routed];
+    if (all.length) {
+      write("\n" + cardText(CARDS.network, all) + "\n");
+      if (yes(await p.ask("Check these networks? (y/N) "))) scope.areas.network = { ranges, routed, exclude: [] };
+    }
   }
 
   write("\n" + cardText(CARDS.host, []) + "\n");
@@ -106,6 +141,19 @@ export interface MapOptions {
   write?: (t: string) => void;
   web?: Omit<WebOptions, "token">;
   hostIO?: HostIO;
+  network?: NetworkOptions;
+}
+
+export const PEOPLE_FILE = "people.json";
+
+function loadPeople(outDir: string): { answeredAt: string; answers: Record<string, Answer> } | null {
+  try {
+    const v = JSON.parse(readFileSync(join(outDir, PEOPLE_FILE), "utf8"));
+    const answers = parseAnswers(v?.answers);
+    return Object.keys(answers).length ? { answeredAt: String(v.answeredAt ?? "").slice(0, 10), answers } : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface MapOutcome {
@@ -133,11 +181,18 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
   } else if (o.interactive) {
     const p = (o.prompter ?? terminalPrompter)();
     try {
-      scope = await askScope(p, o.cwd, write);
+      scope = await askScope(p, o.cwd, write, o.network?.io);
+      const before = loadPeople(o.outDir);
+      write(`\nPeople and process: ${QUESTIONS.length} short yes/no questions about what no scan can see, like phishing training, backups and who to call in a breach. About 3 minutes. Answers stay on this machine and are never shared.\n`);
+      if (yes(await p.ask(`Answer them now?${before ? ` Enter keeps your answers from ${before.answeredAt}.` : ""} (y/N) `))) {
+        const answers = await askPeople((q) => p.ask(q), write);
+        if (Object.keys(answers).length) scope.people = { answers };
+      }
       if (o.sharingOn && !o.settings.profileAsked) await askProfile(p, o.settings, write);
       if (Object.keys(scope.areas).length && yes(await p.ask(`\nSave these answers to ${SCOPE_FILE} so the next run (or a pipeline) can reuse them? (y/N) `))) {
         scope.ownershipToken = o.settings.ownershipToken;
-        writeFileSync(join(o.cwd, SCOPE_FILE), JSON.stringify(scope, null, 2) + "\n");
+        // People and process answers stay out of the scope file, which often ends up in a repository.
+        writeFileSync(join(o.cwd, SCOPE_FILE), JSON.stringify({ ...scope, people: undefined }, null, 2) + "\n");
         write(`Saved ${SCOPE_FILE}.\n`);
       }
     } finally {
@@ -149,18 +204,21 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
   }
 
   const areas = Object.keys(scope.areas) as AreaName[];
-  if (!areas.length) {
+  if (!areas.length && !scope.people) {
     write("Nothing approved, so nothing was checked.\n");
     return { code: 0 };
   }
 
   mkdirSync(o.outDir, { recursive: true });
+  const people = scope.people?.answers && Object.keys(scope.people.answers).length ? { answeredAt: new Date().toISOString().slice(0, 10), answers: scope.people.answers } : loadPeople(o.outDir);
+  if (scope.people?.answers && Object.keys(scope.people.answers).length) writeFileSync(join(o.outDir, PEOPLE_FILE), JSON.stringify(people, null, 2) + "\n");
   const logPath = join(o.outDir, "activity.log");
   writeFileSync(logPath, "");
   const log = new ActivityLog(logPath);
   const results: AreaResult[] = [];
   const ignored: Record<string, number> = {};
   const pqcCounts: Record<string, number> = {};
+  const cloudKeys: CloudKeyAdvice[] = [];
 
   if (scope.areas.code) {
     const res = emptyResult("code");
@@ -171,6 +229,7 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
         const walked = walkFolder(dir);
         for (const u of walked.unreadable) res.errors.push({ area: "code", target: `${folder}/${u.path}`.replace(/^\.\//, ""), kind: u.reason === "permission denied" ? "permission" : "read", message: `couldn't read (${u.reason})` });
         const { findings, pqc, filesScanned } = scanFiles(walked.files);
+        for (const f of walked.files) for (const a of cloudKeyAdvice(f.path, f.content)) cloudKeys.push({ ...a, target: `${folder}/${a.target}`.replace(/^\.\//, "") });
         const ign = join(dir, IGNORE_FILE);
         const { kept, ignored: ig } = applyIgnore(findings, existsSync(ign) ? parseIgnore(readFileSync(ign, "utf8")) : []);
         for (const [k, n] of Object.entries(ig)) ignored[k] = (ignored[k] ?? 0) + n;
@@ -201,6 +260,8 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
     }
   }
 
+  if (scope.areas.network) results.push(await runNetwork(scope.areas.network, log, o.network));
+
   if (scope.areas.host) results.push(runHost(log, o.hostIO));
 
   // Known leftovers the person accepted in .quantum-scan-ignore (websites and this machine; code was handled per folder).
@@ -215,7 +276,7 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
     for (const f of a.accepted) ignored[f.ruleId] = (ignored[f.ruleId] ?? 0) + 1;
   }
   const ranked = rank(results.flatMap((r) => r.findings));
-  const report = buildMapReport(results, ranked, o.version, new Date(), accepted);
+  const report = buildMapReport(results, ranked, o.version, new Date(), accepted, { cloudKeys, people: people ? { answeredAt: people.answeredAt, ...scorePeople(people.answers)! } : null });
   writeFileSync(join(o.outDir, "map.json"), JSON.stringify(report, null, 2) + "\n");
   writeFileSync(join(o.outDir, "map.html"), mapHtml(report, log.entries));
   writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }), null, 2) + "\n");
@@ -231,6 +292,8 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
     if (f.risk === "quantum-vulnerable") a.quantumVulnerable++;
   }
   for (const s of report.strengths) pqcCounts[s.algorithm] = (pqcCounts[s.algorithm] ?? 0) + 1;
+  // Cloud key custody counts by rule only. People and process answers are never part of the summary.
+  for (const a of cloudKeys) rules[a.ruleId] = (rules[a.ruleId] ?? 0) + 1;
   const errors = [...new Set(results.flatMap((r) => r.errors.map((e) => e.kind)))] as ErrorKind[];
   const facts: RunFacts = { command: "map", areas, rules, algorithms, quantumSafe: pqcCounts, fixed: {}, ignored, replacements: {}, errors };
   return { code: 0, report, facts, stateKey: `map:${resolve(o.cwd)}`, state: { rules, pqc: pqcCounts } };

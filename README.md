@@ -80,7 +80,18 @@ Checks more than code, one area at a time, and asks before each one. For every a
   npx @hardkeel/quantum-scan prove example.com
   ```
 
+- **Network and connected equipment:** routers, switches, printers, cameras, storage boxes and smart devices on your own network. For each address it checks whether about 30 common ports answer, reads the title of any web page they serve and the certificate on secure admin pages, and reads the router's list of automatic port forwards (UPnP) if it publishes one. It flags Telnet and plain FTP, open remote desktop, VNC and remote support tools, devices still on their setup page, admin pages without encryption or with the factory certificate, open print ports, camera and recorder ports, unencrypted MQTT, open databases and Docker, and router forwards from the internet. It never logs in, tries a password, sends commands to equipment or changes a setting. Only private address ranges this computer is on (or other segments of your own network that you confirm), at most 1,024 addresses, one connection at a time per device. List fragile equipment, like older industrial or medical controllers, under `exclude` and it's never touched:
+
+  ```json
+  "network": { "ranges": ["192.168.1.0/24"], "routed": ["192.168.20.0/24"], "exclude": ["192.168.1.250"] }
+  ```
+
 - **This machine:** SSH server settings and host keys, OpenSSL settings, certificates on disk, and on Windows the TLS settings and machine certificate store. Read only. It changes nothing and never reads private key files.
+
+Two more parts of the report aren't scans:
+
+- **Who can read your cloud data:** where your Terraform or CloudFormation stores data in cloud storage, databases, disks or backups with keys the provider holds, or with your key in the provider's key service. Those keys protect against a stolen disk, not against the provider, someone working there, or a legal demand made to them. For data no third party should be able to read, it recommends encrypting before upload or keeping the keys in an external key store you hold. Listed as advice, not scored.
+- **People and process:** 18 optional yes/no questions about what no scan can see: phishing and social-engineering training, call-back checks on payment and password requests, multi-factor sign-in, admin accounts, leavers, vendor access, default passwords, firmware, printer job storage, guest and payment network separation, containment, sandboxing, cloud keys, backups, a breach plan and logs. Your answers get their own score next to the technical findings. They're saved in `quantum-scan-map/people.json`, kept out of the scope file, and never sent anywhere.
 
 Results get the same readiness grade as a code scan, and are ranked by when to act: broken now, at risk from data recorded now and read later, long-lived signatures, then the rest. The map is written to `quantum-scan-map/` as `map.html`, `map.json`, a CycloneDX CBOM and `activity.log`, which lists every connection and every file read, with the time and the reason. Nothing leaves your machine except the summary below.
 

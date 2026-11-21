@@ -31,7 +31,9 @@ export type ErrorKind = (typeof ERROR_KINDS)[number];
 export const PQC_NAMES = ["ML-KEM", "Hybrid ML-KEM key exchange", "ML-DSA", "SLH-DSA", "FN-DSA", "Hybrid SSH key exchange"];
 
 /** Extra algorithm names the encryption map uses beyond the code rules. */
-export const MAP_ALGORITHMS = ["TLS key exchange", "SSH key exchange", "SSH host key", "TLS certificate", "Static RSA key exchange", "SSH weak settings", "Expired certificate", "Certificate name mismatch", "Untrusted certificate", "Self-signed certificate"];
+export const MAP_ALGORITHMS = ["TLS key exchange", "SSH key exchange", "SSH host key", "TLS certificate", "Static RSA key exchange", "SSH weak settings", "Expired certificate", "Certificate name mismatch", "Untrusted certificate", "Self-signed certificate",
+  // Network and connected equipment (map-network.ts NET_RULES; listed here so the Worker needn't load network code).
+  "Telnet", "Plain FTP", "Remote Desktop open", "VNC open", "Remote support tool", "Setup page open", "Admin page over plain HTTP", "Vendor default certificate", "Open print port", "LPD printing", "Camera stream port", "DVR service port", "MQTT without encryption", "Docker API open", "Docker API port open", "Database open on the network", "UPnP on the router", "Router forward from the internet"];
 
 const KNOWN_ALGORITHMS = new Set([...Object.keys(ALGORITHMS), ...MAP_ALGORITHMS, ...PQC_NAMES]);
 const RULE_ID = /^[a-z0-9][a-z0-9-]{0,59}$/;
