@@ -2,6 +2,7 @@
 // Unattended runs use a scope file, which records what was approved. Nothing outside it is touched.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { applyIgnore, applyIgnoreTargets, IGNORE_FILE, parseIgnore } from "./ignore.js";
 import { buildCbom } from "./cbom.js";
@@ -11,6 +12,9 @@ import { runHost } from "./map-host.js";
 import { fromCodeFinding, rank, toFinding } from "./map-rank.js";
 import { buildMapReport, mapHtml, mapText } from "./map-report.js";
 import { emptyResult } from "./map-types.js";
+import { cloudKeyAdvice } from "./map-cloud-keys.js";
+import { isPrivateRange, machineRanges, parseRange, realNetIO, runNetwork, suggestedRanges } from "./map-network.js";
+import { askPeople, parseAnswers, QUESTIONS, scorePeople } from "./map-people.js";
 import { proofRecord, runWeb } from "./map-web.js";
 import { scanFiles } from "./scan.js";
 import { INDUSTRIES, SIZES } from "./share-config.js";
@@ -36,7 +40,13 @@ export function parseScope(text) {
         s.areas.web = { targets: strings(v.areas.web.targets) };
     if (v.areas.host)
         s.areas.host = {};
-    const known = new Set(["code", "web", "host"]);
+    if (v.areas.network) {
+        const n = v.areas.network;
+        s.areas.network = { ranges: strings(n.ranges).slice(0, 16), routed: strings(n.routed).slice(0, 16), exclude: strings(n.exclude).slice(0, 256) };
+    }
+    if (v.people?.answers)
+        s.people = { answers: parseAnswers(v.people.answers) };
+    const known = new Set(["code", "web", "host", "network"]);
     const unknown = Object.keys(v.areas).filter((k) => !known.has(k));
     if (unknown.length)
         return { error: `this version can't check: ${unknown.join(", ")}` };
@@ -46,9 +56,21 @@ export function terminalPrompter() {
     const rl = createInterface({ input: process.stdin, output: process.stderr });
     return { ask: (q) => rl.question(q), close: () => rl.close() };
 }
+/** Opens a file with the system's default app. Best effort: a failure leaves the path printed above. */
+export function openFile(path) {
+    const [cmd, args] = process.platform === "win32" ? ["explorer.exe", [path]] : process.platform === "darwin" ? ["open", [path]] : ["xdg-open", [path]];
+    try {
+        const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+        child.on("error", () => { });
+        child.unref();
+    }
+    catch {
+        // Nothing to do: the path is already on screen.
+    }
+}
 const yes = (a) => /^\s*y(es)?\s*$/i.test(a);
 /** Walks through each area with its card. The answer is no unless the person types yes. */
-export async function askScope(p, cwd, write) {
+export async function askScope(p, cwd, write, netIO = realNetIO) {
     const scope = { version: 1, created: new Date().toISOString().slice(0, 10), areas: {} };
     write("\nI'll go through each area, say what it does, and ask first. Press Enter to skip any of them.\n\n");
     write(cardText(CARDS.code, [cwd]) + "\n");
@@ -61,6 +83,32 @@ export async function askScope(p, cwd, write) {
         write("\n" + cardText(CARDS.web, targets) + "\n");
         if (yes(await p.ask("Check these addresses? (y/N) ")))
             scope.areas.web = { targets };
+    }
+    write("\n");
+    const sugg = suggestedRanges(netIO);
+    const rawNet = await p.ask(`Network and connected equipment: list your private address ranges${sugg.length ? ` (this computer is on ${sugg.join(", ")})` : " (e.g. 192.168.1.0/24)"}, or press Enter to skip:\n> `);
+    const asked = rawNet.split(/[\s,]+/).filter(Boolean);
+    if (asked.length) {
+        const mine = machineRanges(netIO);
+        const ranges = [];
+        const routed = [];
+        for (const raw of asked) {
+            const r = parseRange(raw);
+            if ("error" in r || !isPrivateRange(r)) {
+                write(`  Skipping ${raw}: ${"error" in r ? r.error : "only private address ranges can be checked"}.\n`);
+                continue;
+            }
+            if (mine.some((m) => r.start >= m.start && r.end <= m.end))
+                ranges.push(raw);
+            else if (yes(await p.ask(`  This computer isn't on ${raw}. Is it another part of your own network, reached through your router? (y/N) `)))
+                routed.push(raw);
+        }
+        const all = [...ranges, ...routed];
+        if (all.length) {
+            write("\n" + cardText(CARDS.network, all) + "\n");
+            if (yes(await p.ask("Check these networks? (y/N) ")))
+                scope.areas.network = { ranges, routed, exclude: [] };
+        }
     }
     write("\n" + cardText(CARDS.host, []) + "\n");
     if (yes(await p.ask("Check this machine? (y/N) ")))
@@ -77,6 +125,17 @@ export async function askProfile(p, s, write) {
     if (SIZES.includes(size))
         s.size = size;
     s.profileAsked = true;
+}
+export const PEOPLE_FILE = "people.json";
+function loadPeople(outDir) {
+    try {
+        const v = JSON.parse(readFileSync(join(outDir, PEOPLE_FILE), "utf8"));
+        const answers = parseAnswers(v?.answers);
+        return Object.keys(answers).length ? { answeredAt: String(v.answeredAt ?? "").slice(0, 10), answers } : null;
+    }
+    catch {
+        return null;
+    }
 }
 export async function runMap(o) {
     const write = o.write ?? ((t) => process.stderr.write(t));
@@ -96,12 +155,20 @@ export async function runMap(o) {
     else if (o.interactive) {
         const p = (o.prompter ?? terminalPrompter)();
         try {
-            scope = await askScope(p, o.cwd, write);
+            scope = await askScope(p, o.cwd, write, o.network?.io);
+            const before = loadPeople(o.outDir);
+            write(`\nPeople and process: ${QUESTIONS.length} short yes/no questions about what no scan can see, like phishing training, backups and who to call in a breach. About 3 minutes. Answers stay on this machine and are never shared.\n`);
+            if (yes(await p.ask(`Answer them now?${before ? ` Enter keeps your answers from ${before.answeredAt}.` : ""} (y/N) `))) {
+                const answers = await askPeople((q) => p.ask(q), write);
+                if (Object.keys(answers).length)
+                    scope.people = { answers };
+            }
             if (o.sharingOn && !o.settings.profileAsked)
                 await askProfile(p, o.settings, write);
             if (Object.keys(scope.areas).length && yes(await p.ask(`\nSave these answers to ${SCOPE_FILE} so the next run (or a pipeline) can reuse them? (y/N) `))) {
                 scope.ownershipToken = o.settings.ownershipToken;
-                writeFileSync(join(o.cwd, SCOPE_FILE), JSON.stringify(scope, null, 2) + "\n");
+                // People and process answers stay out of the scope file, which often ends up in a repository.
+                writeFileSync(join(o.cwd, SCOPE_FILE), JSON.stringify({ ...scope, people: undefined }, null, 2) + "\n");
                 write(`Saved ${SCOPE_FILE}.\n`);
             }
         }
@@ -114,17 +181,21 @@ export async function runMap(o) {
         return { code: 2 };
     }
     const areas = Object.keys(scope.areas);
-    if (!areas.length) {
+    if (!areas.length && !scope.people) {
         write("Nothing approved, so nothing was checked.\n");
         return { code: 0 };
     }
     mkdirSync(o.outDir, { recursive: true });
+    const people = scope.people?.answers && Object.keys(scope.people.answers).length ? { answeredAt: new Date().toISOString().slice(0, 10), answers: scope.people.answers } : loadPeople(o.outDir);
+    if (scope.people?.answers && Object.keys(scope.people.answers).length)
+        writeFileSync(join(o.outDir, PEOPLE_FILE), JSON.stringify(people, null, 2) + "\n");
     const logPath = join(o.outDir, "activity.log");
     writeFileSync(logPath, "");
     const log = new ActivityLog(logPath);
     const results = [];
     const ignored = {};
     const pqcCounts = {};
+    const cloudKeys = [];
     if (scope.areas.code) {
         const res = emptyResult("code");
         for (const folder of scope.areas.code.folders.length ? scope.areas.code.folders : ["."]) {
@@ -135,6 +206,9 @@ export async function runMap(o) {
                 for (const u of walked.unreadable)
                     res.errors.push({ area: "code", target: `${folder}/${u.path}`.replace(/^\.\//, ""), kind: u.reason === "permission denied" ? "permission" : "read", message: `couldn't read (${u.reason})` });
                 const { findings, pqc, filesScanned } = scanFiles(walked.files);
+                for (const f of walked.files)
+                    for (const a of cloudKeyAdvice(f.path, f.content))
+                        cloudKeys.push({ ...a, target: `${folder}/${a.target}`.replace(/^\.\//, "") });
                 const ign = join(dir, IGNORE_FILE);
                 const { kept, ignored: ig } = applyIgnore(findings, existsSync(ign) ? parseIgnore(readFileSync(ign, "utf8")) : []);
                 for (const [k, n] of Object.entries(ig))
@@ -166,6 +240,8 @@ export async function runMap(o) {
             write(`\nCouldn't look up the ownership record for ${res.dnsFailed.join(", ")} because DNS didn't answer, so ${res.dnsFailed.length === 1 ? "it was" : "they were"} skipped. Check this machine's DNS settings, then run again.\n`);
         }
     }
+    if (scope.areas.network)
+        results.push(await runNetwork(scope.areas.network, log, o.network));
     if (scope.areas.host)
         results.push(runHost(log, o.hostIO));
     // Known leftovers the person accepted in .quantum-scan-ignore (websites and this machine; code was handled per folder).
@@ -182,11 +258,22 @@ export async function runMap(o) {
             ignored[f.ruleId] = (ignored[f.ruleId] ?? 0) + 1;
     }
     const ranked = rank(results.flatMap((r) => r.findings));
-    const report = buildMapReport(results, ranked, o.version, new Date(), accepted);
+    const report = buildMapReport(results, ranked, o.version, new Date(), accepted, { cloudKeys, people: people ? { answeredAt: people.answeredAt, ...scorePeople(people.answers) } : null });
     writeFileSync(join(o.outDir, "map.json"), JSON.stringify(report, null, 2) + "\n");
     writeFileSync(join(o.outDir, "map.html"), mapHtml(report, log.entries));
     writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }), null, 2) + "\n");
-    process.stdout.write(mapText(report) + `\n\nWrote ${join(o.outDir, "map.html")}, map.json, map.cbom.json and activity.log. They stay on this machine.\n`);
+    const reportPath = resolve(o.outDir, "map.html");
+    process.stdout.write(mapText(report) + `\n\nYour report: ${reportPath}\nOpen it in a browser. For a PDF, choose Print, then Save as PDF.\nAlso wrote map.json, map.cbom.json and activity.log. They stay on this machine.\n`);
+    if (o.offerOpen ?? (o.interactive && Boolean(process.stdout.isTTY) && !process.env.CI)) {
+        const p = (o.prompter ?? terminalPrompter)();
+        try {
+            if (yes(await p.ask("\nOpen the report now? (y/N) ")))
+                (o.opener ?? openFile)(reportPath);
+        }
+        finally {
+            p.close();
+        }
+    }
     // Counts for the anonymized summary. Targets never leave this function.
     const rules = {};
     const algorithms = {};
@@ -199,6 +286,9 @@ export async function runMap(o) {
     }
     for (const s of report.strengths)
         pqcCounts[s.algorithm] = (pqcCounts[s.algorithm] ?? 0) + 1;
+    // Cloud key custody counts by rule only. People and process answers are never part of the summary.
+    for (const a of cloudKeys)
+        rules[a.ruleId] = (rules[a.ruleId] ?? 0) + 1;
     const errors = [...new Set(results.flatMap((r) => r.errors.map((e) => e.kind)))];
     const facts = { command: "map", areas, rules, algorithms, quantumSafe: pqcCounts, fixed: {}, ignored, replacements: {}, errors };
     return { code: 0, report, facts, stateKey: `map:${resolve(o.cwd)}`, state: { rules, pqc: pqcCounts } };

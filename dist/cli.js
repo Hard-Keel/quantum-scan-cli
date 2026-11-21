@@ -18,7 +18,7 @@ import { parseScope, runMap, SCOPE_FILE } from "./map-run.js";
 import { checkProof, parseTarget, proofRecord, publicLookup } from "./map-web.js";
 import { buildPayload, diffRuns, sendPayload } from "./share.js";
 import { folderKey, INDUSTRIES, loadSettings, saveSettings, settingsPath, sharingState, showNoticeIfNeeded, SIZES } from "./share-config.js";
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.1";
 const APP_URL = "https://github.com/apps/hard-keel-quantum-scan";
 const HELP = `Hard Keel Quantum Scan ${VERSION}
 
@@ -29,8 +29,8 @@ migration report.
 
 Usage:
   quantum-scan [folder] [options]   Scan code and infrastructure config
-  quantum-scan map [options]        Encryption map: code, websites and this machine,
-                                    asking before each area
+  quantum-scan map [options]        Security map: code, websites, your network and
+                                    equipment, and this machine, asking before each area
   quantum-scan prove <domain>       Show the DNS record that proves a domain is yours
   quantum-scan config <setting>     Sharing, offline mode, industry and size
 
