@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Finds encryption in signing and token libraries.** Recognizes JWT and JOSE algorithm names (RS256, ES256, EdDSA, RSA-OAEP, ECDH-ES and the rest) in JavaScript, TypeScript, Python, Go and Java; Node's RSA and ECDSA signing names; RSA public-key encryption; JWK key types and curves; elliptic, @noble/curves and tweetnacl; golang-jwt signing methods; Java JWT constants; and python-rsa and paramiko key generation. On 259 popular npm packages that handle encryption or tokens, the scanner now finds quantum-breakable encryption in 52, up from 26.
+- Type declaration files (`.d.ts`) and comment lines no longer count as encryption in use.
+- Fewer false leaked-key alarms: constants whose value is their own name (like a header name), and long names made only of words (like `urn:ietf:params:oauth:grant-type:token-exchange`), no longer count.
+
 ## 0.3.1
 
 - **A report you can hand to someone.** `map.html` is now a clean, branded report: the grade up top, a short "Start here" list, findings ranked by what breaks first with how to fix each one, and the same problem in many places shown once with its list of places. It prints well, with page numbers, so your browser's Save as PDF gives a ready PDF. Still one file, with no web fonts or scripts from anywhere else, so it works offline.
