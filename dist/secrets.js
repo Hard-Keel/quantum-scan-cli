@@ -36,7 +36,7 @@ function looksLikeSecretAssignment(match, value, line) {
         return false; // doctest example
     if (/^[a-z_-]+$/.test(value))
         return false; // an identifier, like "userauth-gssapi-token"
-    if (value.toLowerCase() === name.replace(/^\W+/, "").replace(/_/g, "-").toLowerCase())
+    if (value.toLowerCase().startsWith(name.replace(/^\W+/, "").replace(/_/g, "-").toLowerCase()))
         return false; // a constant named for its own value, like a header name
     if (!/^[\x21-\x7e]+$/.test(value))
         return false; // text in another script, like a translated "Password" label

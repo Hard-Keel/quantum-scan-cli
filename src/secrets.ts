@@ -48,7 +48,7 @@ function looksLikeSecretAssignment(match: string, value: string, line: string): 
   if (NOT_A_SECRET_NAME.test(name)) return false;
   if (/^\s*(>>>|\.\.\.)\s/.test(line)) return false; // doctest example
   if (/^[a-z_-]+$/.test(value)) return false; // an identifier, like "userauth-gssapi-token"
-  if (value.toLowerCase() === name.replace(/^\W+/, "").replace(/_/g, "-").toLowerCase()) return false; // a constant named for its own value, like a header name
+  if (value.toLowerCase().startsWith(name.replace(/^\W+/, "").replace(/_/g, "-").toLowerCase())) return false; // a constant named for its own value, like a header name
   if (!/^[\x21-\x7e]+$/.test(value)) return false; // text in another script, like a translated "Password" label
   if (!/\d/.test(value) && value.length < 32) return false;
   if (!/\d/.test(value) && /^[A-Za-z]+(?:[:._/-]+[A-Za-z]+)+$/.test(value)) return false; // a long name made of words, like "urn:ietf:params:oauth:grant-type:token-exchange" or a scope // words, like "excludedRequestDomains:", not a random value

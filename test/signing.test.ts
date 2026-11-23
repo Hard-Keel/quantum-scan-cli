@@ -49,6 +49,7 @@ test("look-alikes stay quiet", () => {
 
 test("secrets: a constant named for its own value is not a secret", () => {
   assert.deepEqual(findSecrets('const X_AWS_EC2_METADATA_TOKEN = "x-aws-ec2-metadata-token";'), []);
+  assert.deepEqual(findSecrets('const X_AWS_EC2_METADATA_TOKEN_TTL = "x-aws-ec2-metadata-token-ttl-seconds";'), []);
   assert.equal(findSecrets('const API_TOKEN = "x9fK2mQ7pL4vR8tZ1wB6nD3s";')[0]?.rule.id, "generic-assignment");
 });
 
