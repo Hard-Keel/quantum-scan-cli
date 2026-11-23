@@ -128,9 +128,9 @@ Accepted items still appear in the report, in their own section, but don't count
 
 ## Anonymized sharing
 
-We collect anonymized, aggregated information about how our checks perform and what kinds of encryption they find. It never includes your code, keys, server names, IP addresses or company name. We use it to improve and build our products and to understand encryption trends across the industry. You can turn this off at any time, or run fully offline.
+We share anonymized, aggregated usage stats about how our checks perform and what kinds of encryption they find, to improve our products. It never includes your code, keys, files, server names, IP addresses or company name. You can turn this off at any time, or run fully offline.
 
-Each run sends one small summary: which checks fired and how often (rounded to bands like 2-5), which encryption types were found, which errors happened, the tool version, operating system and a random ID that is linked to nothing. Industry and company size are optional, and asked once. Details: [hardkeel.com/privacy](https://hardkeel.com/privacy/).
+Everything is rounded into bands and tied to a random ID that links to nothing. Industry and company size are optional, and asked once. To see exactly what a run sends, run `quantum-scan config show-shared`. Details: [hardkeel.com/privacy](https://hardkeel.com/privacy/).
 
 | Command | What it does |
 | --- | --- |

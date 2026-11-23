@@ -57,7 +57,7 @@ test("notice: shown once on a workstation, every run in a pipeline, never when s
   assert.equal(showNoticeIfNeeded(s, "on", {}, w), false);
   assert.equal(showNoticeIfNeeded(s, "on", { CI: "true" }, w), true);
   assert.equal(showNoticeIfNeeded(settings(), "off", {}, w), false);
-  assert.match(seen[0].replace(/\s+/g, " "), /never includes your code, keys, server names, IP addresses or company name/);
+  assert.match(seen[0].replace(/\s+/g, " "), /never includes your code, keys, files, server names, IP addresses or company name/);
   assert.match(seen[0], /config sharing off/);
   assert.doesNotMatch(seen[0], /publish/i);
 });

@@ -117,7 +117,7 @@ export async function askScope(p, cwd, write, netIO = realNetIO) {
 }
 /** Optional, asked once: lets the anonymized counts be grouped by industry and size. */
 export async function askProfile(p, s, write) {
-    write(`\nOptional: your industry and company size help us understand encryption trends. Press Enter to skip.\n  Industries: ${INDUSTRIES.join(", ")}\n`);
+    write(`\nOptional: your industry and company size help us group the stats. Press Enter to skip.\n  Industries: ${INDUSTRIES.join(", ")}\n`);
     const ind = (await p.ask("Industry: ")).trim().toLowerCase();
     if (INDUSTRIES.includes(ind))
         s.industry = ind;

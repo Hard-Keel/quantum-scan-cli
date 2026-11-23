@@ -134,7 +134,7 @@ export async function askScope(p: Prompter, cwd: string, write: (t: string) => v
 
 /** Optional, asked once: lets the anonymized counts be grouped by industry and size. */
 export async function askProfile(p: Prompter, s: Settings, write: (t: string) => void): Promise<void> {
-  write(`\nOptional: your industry and company size help us understand encryption trends. Press Enter to skip.\n  Industries: ${INDUSTRIES.join(", ")}\n`);
+  write(`\nOptional: your industry and company size help us group the stats. Press Enter to skip.\n  Industries: ${INDUSTRIES.join(", ")}\n`);
   const ind = (await p.ask("Industry: ")).trim().toLowerCase();
   if (INDUSTRIES.includes(ind as Industry)) s.industry = ind as Industry;
   const size = (await p.ask(`Company size (${SIZES.join(", ")}): `)).trim();
