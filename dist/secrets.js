@@ -36,10 +36,14 @@ function looksLikeSecretAssignment(match, value, line) {
         return false; // doctest example
     if (/^[a-z_-]+$/.test(value))
         return false; // an identifier, like "userauth-gssapi-token"
+    if (value.toLowerCase() === name.replace(/^\W+/, "").replace(/_/g, "-").toLowerCase())
+        return false; // a constant named for its own value, like a header name
     if (!/^[\x21-\x7e]+$/.test(value))
         return false; // text in another script, like a translated "Password" label
     if (!/\d/.test(value) && value.length < 32)
-        return false; // words, like "excludedRequestDomains:", not a random value
+        return false;
+    if (!/\d/.test(value) && /^[A-Za-z]+(?:[:._/-]+[A-Za-z]+)+$/.test(value))
+        return false; // a long name made of words, like "urn:ietf:params:oauth:grant-type:token-exchange" or a scope // words, like "excludedRequestDomains:", not a random value
     if (/^\$?[a-z0-9_]+\$/.test(value))
         return false; // a stored password hash, like "pbkdf2_sha256$..." or "$argon2id$..."
     if (/\$\{?[A-Za-z_]|\$\(|\{\}|%[sd]|^var\(/.test(value))

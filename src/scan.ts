@@ -8,6 +8,9 @@ import { communityRulesFor } from "./community.ts";
 import type { Finding, ScanResult } from "./types.ts";
 
 const MAX_LINE = 2000;
+const TYPES_FILE = /\.d\.[cm]?ts$/;
+// A line that is only a comment: //, /*, a * continuation, or # (not a shebang, Rust attribute or C preprocessor line).
+const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*(?:\s|\/|$)|#(?![!\[]|include|define|if|else|endif|pragma|import|undef|error))/;
 const DOC_FILE = /\.(md|mdx|rst|txt|html?|adoc)$/i;
 // Test code is full of throwaway keys and passwords, including fakes in real token formats, so no secret counts there.
 export const TEST_PATH = /(^|\/)(tests?|__tests__|__snapshots__|testdata|test-data|testing|test[-_]?(?:utils?|helpers?|support|env|suite|fixtures?)|e2e[-_][a-z0-9_-]+|[a-z0-9_-]+[-_]tests?|(?!(?:la|con|at|pro|de)test\/)[a-z0-9]+test|fixtures?|spec|specs|mocks?|e2e|integration(?:[-_]?tests?)?|vectors|test[-_]?vectors|[a-z0-9_]+_vectors)\/|(_test\.go|_test\.py|\.(test|spec)\.[cm]?[jt]sx?)$|(^|\/)test[-_][^/]*$|(^|\/)testing[-_]?utils?\.[a-z]+$|(^|\/)fixtures?\.[cm]?[jt]sx?$/i;
@@ -65,7 +68,7 @@ export function scanLines(path: string, lines: { no: number; text: string }[]): 
       // A private-key header only counts when real key material follows it (docs often show "XXXX").
       if (hit.rule.id === "private-key" && !hasKeyMaterial(raw, lines[idx + 1])) continue;
       // Docs are full of example passwords; only specific token formats count there.
-      if (hit.rule.id === "generic-assignment" && (DOC_FILE.test(path) || LOCALE_PATH.test(path))) continue;
+      if (hit.rule.id === "generic-assignment" && (DOC_FILE.test(path) || LOCALE_PATH.test(path) || TYPES_FILE.test(path) || COMMENT_LINE.test(raw))) continue;
       if (hit.rule.id === "db-url-password" && DOC_FILE.test(path)) continue;
       if (TEST_PATH.test(path)) continue;
       if (LOOSE_SECRET_RULES.has(hit.rule.id) && (EXAMPLE_PATH.test(path) || EXAMPLE_FILE.test(path) || DOC_FILE.test(path))) continue;
@@ -84,7 +87,8 @@ export function scanLines(path: string, lines: { no: number; text: string }[]): 
       });
     }
 
-    // Crypto: language-scoped rules.
+    // Crypto: language-scoped rules. Type declarations and comments describe code; they don't run it.
+    if (TYPES_FILE.test(path) || COMMENT_LINE.test(raw)) continue;
     for (const rule of rules) {
       const m = raw.match(rule.pattern);
       if (!m) continue;
