@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.3.2
 
-- **Finds encryption in signing and token libraries.** Recognizes JWT and JOSE algorithm names (RS256, ES256, EdDSA, RSA-OAEP, ECDH-ES and the rest) in JavaScript, TypeScript, Python, Go and Java; Node's RSA and ECDSA signing names; RSA public-key encryption; JWK key types and curves; elliptic, @noble/curves and tweetnacl; golang-jwt signing methods; Java JWT constants; and python-rsa and paramiko key generation. On 259 popular npm packages that handle encryption or tokens, the scanner now finds quantum-breakable encryption in 52, up from 26.
+- **Finds encryption in signing and token libraries.** Recognizes JWT and JOSE algorithm names (RS256, ES256, EdDSA, RSA-OAEP, ECDH-ES and the rest) in JavaScript, TypeScript, Python, Go and Java; Node's RSA and ECDSA signing names; RSA public-key encryption; JWK key types and curves; elliptic, @noble/curves and tweetnacl; golang-jwt signing methods; Java JWT constants; and python-rsa and paramiko key generation. On 259 popular npm packages that handle encryption or tokens, the scanner finds quantum-breakable encryption in 52.
 - Type declaration files (`.d.ts`) and comment lines no longer count as encryption in use.
+- Shorter, plainer wording for the anonymized sharing notice, with "files" added to what is never sent.
 - Fewer false leaked-key alarms: constants whose value is their own name (like a header name), and long names made only of words (like `urn:ietf:params:oauth:grant-type:token-exchange`), no longer count.
 
 ## 0.3.1
