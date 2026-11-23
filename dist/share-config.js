@@ -85,10 +85,9 @@ export function sharingState(s, opts, env = process.env) {
         return "do-not-track";
     return s.sharing === "off" ? "off" : "on";
 }
-export const NOTICE = `Hard Keel Quantum Scan collects anonymized, aggregated information about how its
-checks perform and what kinds of encryption they find. It never includes your code,
-keys, server names, IP addresses or company name. We use it to improve and build our
-products and to understand encryption trends across the industry.
+export const NOTICE = `Hard Keel Quantum Scan shares anonymized, aggregated usage stats about how its
+checks perform and what kinds of encryption they find, to improve our products.
+It never includes your code, keys, files, server names, IP addresses or company name.
 
   See what's sent:      quantum-scan config show-shared
   Turn it off:          quantum-scan config sharing off   (or QUANTUM_SCAN_SHARING=off)
