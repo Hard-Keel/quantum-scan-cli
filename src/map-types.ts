@@ -26,6 +26,16 @@ export const TIER_NOTES: Record<Tier, string> = {
   4: "Uses RSA or elliptic-curve encryption. NIST disallows these after 2035.",
 };
 
+/**
+ * How urgent one finding is, inside its tier, for people who want a plain rating.
+ * High: broken now (unless minor), internet-facing key exchange, and signatures that must stay trusted for years.
+ * Medium: other quantum-breakable encryption that faces the internet, lasts for years, or protects data that can be recorded or stored.
+ * Low: the rest, mostly short-lived signatures inside your own systems.
+ */
+export type Rating = "high" | "medium" | "low";
+
+export const RATING_TITLES: Record<Rating, string> = { high: "High", medium: "Medium", low: "Low" };
+
 export interface MapFinding {
   area: AreaName;
   target: string; // where it was found. Stays on this machine; never shared.
@@ -40,6 +50,7 @@ export interface MapFinding {
   longLived?: boolean;
   keySize?: number;
   tier?: Tier;
+  rating?: Rating;
 }
 
 /** Something already quantum-safe, so customers see progress, not only problems. */

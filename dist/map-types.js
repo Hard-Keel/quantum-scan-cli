@@ -11,6 +11,7 @@ export const TIER_NOTES = {
     3: "Signatures that must stay trusted for years. NIST deprecates these methods after 2030.",
     4: "Uses RSA or elliptic-curve encryption. NIST disallows these after 2035.",
 };
+export const RATING_TITLES = { high: "High", medium: "Medium", low: "Low" };
 export function emptyResult(area) {
     return { area, findings: [], strengths: [], errors: [], checked: [], skipped: [] };
 }

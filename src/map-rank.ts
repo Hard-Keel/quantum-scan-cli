@@ -1,7 +1,7 @@
 // Ranks every finding by what breaks first, and turns code findings into map findings.
 
 import type { Finding } from "./types.ts";
-import type { MapFinding, Tier } from "./map-types.ts";
+import type { MapFinding, Rating, Tier } from "./map-types.ts";
 
 export function tierOf(f: MapFinding): Tier {
   if (f.risk !== "quantum-vulnerable") return 1;
@@ -11,11 +11,34 @@ export function tierOf(f: MapFinding): Tier {
 }
 
 const SEV = { critical: 0, high: 1, medium: 2, low: 3 } as const;
+const RATE = { high: 0, medium: 1, low: 2 } as const;
 
+/** Key exchange and public-key encryption protect data someone can record or store and read later. */
+const recordable = (f: MapFinding) => f.primitive === "key-agreement" || f.primitive === "public-key-encryption";
+
+export function ratingOf(f: MapFinding, tier = tierOf(f)): Rating {
+  if (tier === 1) return f.severity === "critical" || f.severity === "high" ? "high" : f.severity === "medium" ? "medium" : "low";
+  if (tier === 2 || tier === 3) return "high";
+  return f.internetFacing || f.longLived || recordable(f) ? "medium" : "low";
+}
+
+/** What breaks first: tier, then rating, then internet-facing and long-lived ahead of the rest, then severity. */
 export function rank(findings: MapFinding[]): MapFinding[] {
   return findings
-    .map((f) => ({ ...f, tier: tierOf(f) }))
-    .sort((a, b) => a.tier! - b.tier! || SEV[a.severity] - SEV[b.severity] || a.area.localeCompare(b.area) || a.target.localeCompare(b.target));
+    .map((f) => {
+      const tier = tierOf(f);
+      return { ...f, tier, rating: ratingOf(f, tier) };
+    })
+    .sort(
+      (a, b) =>
+        a.tier - b.tier ||
+        RATE[a.rating] - RATE[b.rating] ||
+        Number(b.internetFacing) - Number(a.internetFacing) ||
+        Number(!!b.longLived) - Number(!!a.longLived) ||
+        SEV[a.severity] - SEV[b.severity] ||
+        a.area.localeCompare(b.area) ||
+        a.target.localeCompare(b.target),
+    );
 }
 
 export function fromCodeFinding(f: Finding): MapFinding {

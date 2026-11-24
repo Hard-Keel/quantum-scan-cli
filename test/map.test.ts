@@ -9,7 +9,9 @@ import { join } from "node:path";
 import { createServer as tlsServer } from "node:tls";
 import { ActivityLog } from "../src/map-activity.ts";
 import { opensshVersion, opensslPolicyFindings, parseSchannel, parseSshd, parseWindowsCerts, runHost, sshPublicKey, type HostIO } from "../src/map-host.ts";
-import { rank, tierOf } from "../src/map-rank.ts";
+import { rank, ratingOf, tierOf } from "../src/map-rank.ts";
+import { buildMapReport, mapHtml, mapText } from "../src/map-report.ts";
+import { buildMapSarif } from "../src/map-sarif.ts";
 import { parseScope, runMap, type Prompter } from "../src/map-run.ts";
 import type { MapFinding } from "../src/map-types.ts";
 import { canTestHybrid, certFindings, certSignatureOid, checkTls, coveringDomain, handshake, parentDomains, parseKexInit, parseTarget, proofRecord, runWeb, sshKexInit, type Handshake } from "../src/map-web.ts";
@@ -117,6 +119,50 @@ test("tls: a TLS 1.2 server without hybrid is flagged for key exchange and stati
   }
 });
 
+test("tls: a server offering only the P-256 hybrid (SecP256r1MLKEM768) gets credit too", { skip: (!canTestHybrid() || !haveOpenssl) && "needs OpenSSL 3.5 and the openssl command" }, async () => {
+  const srv = await startTls({ ecdhCurve: "SecP256r1MLKEM768:P-256", minVersion: "TLSv1.3" });
+  try {
+    const res = emptyResult("web");
+    await checkTls({ host: "localhost", port: srv.port, kind: "tls", label: `localhost:${srv.port}` }, new ActivityLog(), res, (h, p, o) => handshake("127.0.0.1", p, { ...o, servername: "localhost" }), 0);
+    assert.deepEqual(res.strengths.map((s) => s.algorithm), ["Hybrid ML-KEM key exchange"]);
+    assert.ok(!res.findings.some((f) => f.ruleId === "web-tls-kex"));
+  } finally {
+    srv.close();
+  }
+});
+
+test("tls: when this Node.js can't offer ML-KEM, a TLS 1.3 site isn't marked down for it", async () => {
+  const res = emptyResult("web");
+  const log = new ActivityLog();
+  const calls: string[] = [];
+  const hs = async (_h: string, _p: number, o: { ecdhCurve?: string }) => {
+    if (o.ecdhCurve) calls.push(o.ecdhCurve);
+    return { ok: true, protocol: "TLSv1.3", keyExchange: "X25519" } as Handshake;
+  };
+  await checkTls({ host: "example.com", port: 443, kind: "tls", label: "example.com:443" }, log, res, hs, 0, async () => false, false);
+  assert.ok(!res.findings.some((f) => f.ruleId === "web-tls-kex"));
+  assert.equal(calls.length, 0); // no hybrid probe was sent
+  assert.match(res.skipped.map((s) => s.reason).join(" "), /not tested.*OpenSSL 3\.5.*Not counted against the grade/);
+});
+
+test("tls: an old-TLS site is still flagged for key exchange when ML-KEM can't be tested", async () => {
+  const res = emptyResult("web");
+  const hs = async () => ({ ok: true, protocol: "TLSv1.2", keyExchange: "ECDH" }) as Handshake;
+  await checkTls({ host: "example.com", port: 443, kind: "tls", label: "example.com:443" }, new ActivityLog(), res, hs, 0, async () => false, false);
+  const kex = res.findings.find((f) => f.ruleId === "web-tls-kex");
+  assert.ok(kex);
+  assert.match(kex!.title, /over TLSv1\.2/);
+  assert.equal(res.skipped.length, 0);
+});
+
+test("tls: a TLS 1.3 site that refuses the hybrid offer is flagged", async () => {
+  const res = emptyResult("web");
+  const hs = async (_h: string, _p: number, o: { ecdhCurve?: string }) => (o.ecdhCurve ? { ok: false, error: "tls" } : { ok: true, protocol: "TLSv1.3", keyExchange: "X25519" }) as Handshake;
+  await checkTls({ host: "example.com", port: 443, kind: "tls", label: "example.com:443" }, new ActivityLog(), res, hs, 0, async () => false, true);
+  const kex = res.findings.find((f) => f.ruleId === "web-tls-kex");
+  assert.equal(kex?.title, "Key exchange uses X25519 with no quantum-safe option");
+});
+
 function kexInitPacket(lists: string[]): Buffer {
   const parts: Buffer[] = [Buffer.from([20]), Buffer.alloc(16)];
   for (const l of [...lists, "none", "none", "", "", ""].slice(0, 10)) {
@@ -168,6 +214,28 @@ test("rank: broken now, then internet-facing key exchange, then long-lived signa
   assert.equal(tierOf(f({ primitive: "key-agreement", internetFacing: false })), 4);
   assert.equal(tierOf(f({ longLived: true })), 3);
   assert.deepEqual(rank([f({}), f({ risk: "exposed" }), f({ longLived: true }), f({ primitive: "key-agreement", internetFacing: true })]).map((x) => x.tier), [1, 2, 3, 4]);
+});
+
+test("rank: rated high, medium or low, with internet-facing and long-lived first", () => {
+  const f = (o: Partial<MapFinding>): MapFinding => ({ area: "code", target: "x", ruleId: "r", title: "t", algorithm: "RSA", primitive: "signature", risk: "quantum-vulnerable", severity: "medium", fix: "", internetFacing: false, ...o });
+  assert.equal(ratingOf(f({ risk: "secret", severity: "critical" })), "high");
+  assert.equal(ratingOf(f({ risk: "weak-now", severity: "medium" })), "medium");
+  assert.equal(ratingOf(f({ risk: "exposed", severity: "low" })), "low");
+  assert.equal(ratingOf(f({ primitive: "key-agreement", internetFacing: true })), "high");
+  assert.equal(ratingOf(f({ longLived: true })), "high");
+  assert.equal(ratingOf(f({ internetFacing: true })), "medium"); // a website's ECDSA certificate
+  assert.equal(ratingOf(f({ primitive: "public-key-encryption" })), "medium"); // stored data can be read later
+  assert.equal(ratingOf(f({})), "low"); // a short-lived signature inside your own systems
+
+  const ranked = rank([f({ target: "inside" }), f({ target: "public", internetFacing: true }), f({ target: "stored", primitive: "public-key-encryption" })]);
+  assert.deepEqual(ranked.map((x) => [x.target, x.rating]), [["public", "medium"], ["stored", "medium"], ["inside", "low"]]);
+
+  const report = buildMapReport([], ranked, "test", new Date("2026-11-23T00:00:00Z"));
+  assert.deepEqual(report.ratings, { high: 0, medium: 2, low: 1 });
+  const text = mapText(report);
+  assert.match(text, /3 findings \(2 medium, 1 low\), ranked by what breaks first/);
+  assert.match(text, /\[Medium\] public {2}t/);
+  assert.match(mapHtml(report, []), /<span class="rate medium">Medium<\/span>Code and config · 3 places/); // one group, as urgent as its most urgent place
 });
 
 // ---------- this machine ----------
@@ -288,7 +356,7 @@ test("map: runs from a scope file, writes the report locally, and the counts car
     sharingOn: true,
     interactive: false,
     write: () => {},
-    web: { lookup: async () => [[`hardkeel-scan-verify=${"a".repeat(24)}`]], handshake: async (_h, _p, o) => (o.ecdhCurve ? { ok: false, error: "tls" } : { ok: true, protocol: "TLSv1.3", keyExchange: "X25519" }), gapMs: 0 },
+    web: { lookup: async () => [[`hardkeel-scan-verify=${"a".repeat(24)}`]], handshake: async (_h, _p, o) => (o.ecdhCurve ? { ok: false, error: "tls" } : { ok: true, protocol: "TLSv1.3", keyExchange: "X25519" }), gapMs: 0, hybridTestable: true, http: async () => ({ status: 404, body: "" }) },
     hostIO: fakeIO({ "/etc/ssh/ssh_host_ed25519_key.pub": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA root@secret-host" }),
   }).finally(() => (console.log = log));
   assert.equal(out.code, 0);
@@ -296,8 +364,32 @@ test("map: runs from a scope file, writes the report locally, and the counts car
   assert.match(html, /secret-host\.ours\.com/);
   assert.match(readFileSync(join(dir, "map", "activity.log"), "utf8"), /DNS lookup/);
   assert.equal(JSON.parse(readFileSync(join(dir, "map", "map.cbom.json"), "utf8")).bomFormat, "CycloneDX");
+  const sarif = JSON.parse(readFileSync(join(dir, "map", "map.sarif.json"), "utf8"));
+  assert.equal(sarif.version, "2.1.0");
+  assert.equal(sarif.runs[0].results.length, out.report!.findings.length);
   const facts = JSON.stringify(out.facts);
   assert.doesNotMatch(facts, /secret-host|ours\.com|app\.py|\/etc\//);
   assert.ok(out.report!.counts[1] >= 1); // MD5 and RSA-1024 are broken now
   assert.ok(out.report!.findings.some((f) => f.ruleId === "web-tls-kex" && f.tier === 2));
+});
+
+test("map sarif: code points at file and line, other places are logical, level follows the rating", () => {
+  const base = { ruleId: "r", title: "T", algorithm: "RSA", primitive: "key-agreement" as const, risk: "quantum-vulnerable" as const, severity: "medium" as const, fix: "F", internetFacing: false };
+  const s = buildMapSarif([
+    { ...base, area: "code", target: "src/app.py:12", rating: "low" },
+    { ...base, area: "web", target: "shop.example.com:443", rating: "high", internetFacing: true, tier: 2 },
+    { ...base, area: "host", target: "/etc/ssh/sshd_config" },
+  ] as MapFinding[], "9.9.9");
+  const r = s.runs[0].results;
+  assert.deepEqual(r[0].locations[0], { physicalLocation: { artifactLocation: { uri: "src/app.py", uriBaseId: "%SRCROOT%" }, region: { startLine: 12 } } });
+  assert.deepEqual(r[1].locations[0], { logicalLocations: [{ fullyQualifiedName: "shop.example.com:443", kind: "resource" }] });
+  assert.deepEqual(r.map((x) => x.level), ["note", "error", "warning"]);
+  assert.equal(r[1].properties.tier, 2);
+  assert.equal(s.runs[0].tool.driver.rules.length, 1);
+  // One rule per check, rated for GitHub by its worst result; the risk tier stays on each result.
+  // Quantum-breakable encryption is scored on the capped scale, so medium is 5.0, not 5.5.
+  assert.equal(r[0].ruleId, "r");
+  assert.equal(s.runs[0].tool.driver.rules[0].properties["security-severity"], "5.0");
+  assert.equal(r[0].properties.risk, "quantum-vulnerable");
+  assert.ok(r[0].partialFingerprints["hardkeel/v1"]);
 });

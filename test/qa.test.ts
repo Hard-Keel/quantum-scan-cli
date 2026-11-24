@@ -151,7 +151,7 @@ test("QA-6: static RSA on a server that offers TLS 1.3 is a low-severity leftove
 test("QA-6: accepted leftovers from .quantum-scan-ignore are left out of the map's score", async () => {
   const dir = mkdtempSync(join(tmpdir(), "qs-accept-"));
   writeFileSync(join(dir, "scope.json"), JSON.stringify({ version: 1, ownershipToken: TOKEN, areas: { web: { targets: ["example.com"] } } }));
-  const web = { lookup: async () => RECORD, gapMs: 0, cipherProbe: async () => false, handshake: async (_h: string, _p: number, o: Record<string, unknown>): Promise<Handshake> => (o.maxVersion === "TLSv1" || o.maxVersion === "TLSv1.1" ? { ok: false, error: "tls" } : { ok: true, protocol: o.maxVersion === "TLSv1.2" ? "TLSv1.2" : "TLSv1.3", keyExchange: "X25519" }) };
+  const web = { lookup: async () => RECORD, gapMs: 0, http: async () => ({ status: 404, body: "" }), cipherProbe: async () => false, handshake: async (_h: string, _p: number, o: Record<string, unknown>): Promise<Handshake> => (o.maxVersion === "TLSv1" || o.maxVersion === "TLSv1.1" ? { ok: false, error: "tls" } : { ok: true, protocol: o.maxVersion === "TLSv1.2" ? "TLSv1.2" : "TLSv1.3", keyExchange: "X25519" }) };
   const opts = { scopePath: join(dir, "scope.json"), cwd: dir, version: "0.2.0", settings: loadSettings(join(dir, "s.json")), sharingOn: false, interactive: false, write: () => {}, web };
   const before = await runMap({ ...opts, outDir: join(dir, "m1") });
   writeFileSync(join(dir, ".quantum-scan-ignore"), "example.com:443:web-tls-static-rsa\n");

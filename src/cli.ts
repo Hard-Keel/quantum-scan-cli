@@ -5,7 +5,7 @@
 // and writes an encryption inventory (CycloneDX CBOM) and a migration report.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { walkFolder } from "./walk.ts";
 import { buildCbom } from "./cbom.ts";
 import { migrationReportMarkdown, prSummaryLine, shortLabel, sortFindings } from "./report.ts";
@@ -18,6 +18,8 @@ import { applyIgnore, IGNORE_FILE, parseIgnore } from "./ignore.ts";
 import { ActivityLog } from "./map-activity.ts";
 import { parseScope, runMap, SCOPE_FILE } from "./map-run.ts";
 import { checkProof, parseTarget, proofRecord, publicLookup } from "./map-web.ts";
+import { inventoryCounts, type InventoryItem } from "./inventory.ts";
+import { ctDomain, hostsText, lookupCt, type CtFetch } from "./map-ct.ts";
 import { buildPayload, diffRuns, sendPayload, type Payload, type RunFacts } from "./share.ts";
 import { folderKey, INDUSTRIES, loadSettings, saveSettings, settingsPath, sharingState, showNoticeIfNeeded, SIZES, type FolderState, type Industry, type SharingReason, type Settings, type Size } from "./share-config.ts";
 
@@ -36,10 +38,14 @@ Usage:
   quantum-scan map [options]        Security map: code, websites, your network and
                                     equipment, and this machine, asking before each area
   quantum-scan prove <domain>       Show the DNS record that proves a domain is yours
+  quantum-scan hosts <domain>       List hostnames under a domain from public certificate
+                                    logs, to check with map (--all, --json)
   quantum-scan config <setting>     Sharing, offline mode, industry and size
 
 Options:
-  --format <text|json|sarif>   What to print (default: text)
+  --format <text|json|sarif|cyclonedx>
+                               What to print (default: text). sarif is for GitHub code
+                               scanning; cyclonedx is the encryption inventory (CBOM)
   --output <file>              Write the --format output to a file instead
   --cbom <file>                Write the encryption inventory (CycloneDX 1.6 CBOM)
   --report <file>              Write the migration report (Markdown)
@@ -71,7 +77,7 @@ names, IP addresses or company name. Details: https://hardkeel.com/privacy/
 `;
 
 function parseArgs(argv: string[]) {
-  const flags = new Set(["quiet", "help", "version", "offline"]);
+  const flags = new Set(["quiet", "help", "version", "offline", "all", "json"]);
   const opts: Record<string, string | true> = {};
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -88,7 +94,20 @@ function parseArgs(argv: string[]) {
   return { opts, dir: rest[0] ?? "." };
 }
 
-function textReport(findings: Finding[], filesScanned: number, quiet: boolean, score: ReadinessScore): string {
+/**
+ * The scanned folder's path inside its git repository, so SARIF paths start at the repository root
+ * when only a subfolder was scanned. GitHub code scanning can't place a file otherwise. Outside a
+ * repository, paths stay relative to the scanned folder.
+ */
+export function repoPrefix(dir: string): string {
+  const abs = resolve(dir);
+  for (let d = abs; ; d = dirname(d)) {
+    if (existsSync(join(d, ".git"))) return relative(d, abs).split("\\").join("/");
+    if (dirname(d) === d) return "";
+  }
+}
+
+function textReport(findings: Finding[], filesScanned: number, quiet: boolean, score: ReadinessScore, inventory: InventoryItem[] = []): string {
   const out = [`Hard Keel Quantum Scan · ${filesScanned} file${filesScanned === 1 ? "" : "s"} scanned`, "", gradeSentence(score), ""];
   if (!findings.length) {
     out.push("Nothing found. No leaked keys, weak or quantum-breakable encryption, or exposed settings.");
@@ -107,6 +126,11 @@ function textReport(findings: Finding[], filesScanned: number, quiet: boolean, s
       sorted.filter((f) => f.risk === "quantum-vulnerable"),
       "Safe today, but quantum computers will be able to break these. NIST plans to phase them out between 2030 and 2035.",
     );
+  }
+  if (inventory.length) {
+    const counts = inventoryCounts(inventory);
+    const shown = counts.slice(0, 6).map(([a, n]) => `${a} (${n})`).join(", ");
+    out.push("", `Also in use, nothing to fix: ${shown}${counts.length > 6 ? `, and ${counts.length - 6} more` : ""}. The full list is in the inventory (--cbom).`);
   }
   if (!quiet) out.push("", `Check every pull request automatically: ${APP_URL}`);
   return out.join("\n");
@@ -149,17 +173,18 @@ export function scanCommand(argv: string[]): { code: number; facts?: RunFacts; s
   const badgePath = str("badge");
   if (badgePath) writeFileSync(badgePath, badgeSvg(score) + "\n");
   const cbomPath = str("cbom");
-  if (cbomPath) writeFileSync(cbomPath, JSON.stringify(buildCbom(findings, { repo, toolVersion: VERSION }), null, 2) + "\n");
+  if (cbomPath) writeFileSync(cbomPath, JSON.stringify(buildCbom(findings, { repo, toolVersion: VERSION }, scanned.inventory), null, 2) + "\n");
   const reportPath = str("report");
   if (reportPath) writeFileSync(reportPath, migrationReportMarkdown(repo, findings, new Date().toISOString().slice(0, 10), score) + "\n");
 
   const format = str("format") ?? "text";
   let body: string;
-  if (format === "json") body = JSON.stringify({ tool: "hard-keel-quantum-scan", version: VERSION, filesScanned, score, findings }, null, 2);
-  else if (format === "sarif") body = JSON.stringify(buildSarif(findings, VERSION), null, 2);
-  else if (format === "text") body = textReport(findings, filesScanned, opts.quiet === true, score);
+  if (format === "json") body = JSON.stringify({ tool: "hard-keel-quantum-scan", version: VERSION, filesScanned, score, findings, inventory: scanned.inventory }, null, 2);
+  else if (format === "sarif") body = JSON.stringify(buildSarif(findings, VERSION, { uriPrefix: repoPrefix(dir) }), null, 2);
+  else if (format === "cyclonedx" || format === "cbom") body = JSON.stringify(buildCbom(findings, { repo, toolVersion: VERSION }, scanned.inventory), null, 2);
+  else if (format === "text") body = textReport(findings, filesScanned, opts.quiet === true, score, scanned.inventory);
   else {
-    console.error(`Unknown --format "${format}". Use text, json or sarif.`);
+    console.error(`Unknown --format "${format}". Use text, json, sarif or cyclonedx.`);
     return { code: 2 };
   }
   const outPath = str("output");
@@ -255,6 +280,28 @@ async function proveCommand(domain: string | undefined, s: Settings): Promise<nu
   return r2.status === "found" ? 0 : 1;
 }
 
+/** Lists hostnames under a domain from public certificate logs. One request to crt.sh; none of the hosts are contacted. */
+export async function hostsCommand(args: string[], s: Settings, fetchFn?: CtFetch): Promise<number> {
+  const { opts, dir } = parseArgs(args);
+  const domain = ctDomain(dir);
+  if (!domain) {
+    console.error("Usage: quantum-scan hosts <domain> [--all] [--json], for example quantum-scan hosts example.com");
+    return 2;
+  }
+  if (sharingState(s, { offline: Boolean(opts.offline) }) === "offline") {
+    console.error(`Offline mode is on, so this won't look ${domain} up. It asks crt.sh, a public certificate log, for names under the domain. Turn offline mode off for this run, or search ${domain} on crt.sh yourself.`);
+    return 2;
+  }
+  const r = await lookupCt(domain, VERSION, fetchFn);
+  if ("error" in r) {
+    console.error(`Couldn't list hostnames for ${domain}: ${r.error}`);
+    return 1;
+  }
+  if (opts.json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+  else process.stdout.write(hostsText(r, Boolean(opts.all)));
+  return 0;
+}
+
 /** Entry point: subcommands, the first-run notice and the anonymized summary. */
 export async function run(argv: string[], deps: { send?: Sender; interactive?: boolean } = {}): Promise<number> {
   const send = deps.send ?? ((p: Payload) => sendPayload(p));
@@ -262,6 +309,7 @@ export async function run(argv: string[], deps: { send?: Sender; interactive?: b
   const [cmd, ...rest] = argv;
   if (cmd === "config") return configCommand(rest, s);
   if (cmd === "prove") return proveCommand(rest[0], s);
+  if (cmd === "hosts") return hostsCommand(rest, s);
 
   const offline = argv.includes("--offline");
   const sharing = sharingState(s, { offline });

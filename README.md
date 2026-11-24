@@ -40,7 +40,7 @@ Plan for later
 | `--cbom <file>` | Write the encryption inventory as a CycloneDX 1.6 CBOM |
 | `--report <file>` | Write the migration report, in the order to fix things |
 | `--badge <file>` | Write a quantum readiness badge (SVG) to put on your README |
-| `--format text\|json\|sarif` | What to print. SARIF works with GitHub code scanning |
+| `--format text\|json\|sarif\|cyclonedx` | What to print. SARIF works with GitHub code scanning; `cyclonedx` prints the encryption inventory (CBOM) |
 | `--output <file>` | Write that output to a file |
 | `--fail-on <list>` | Exit with 1 on `secret`, `weak-now`, `exposed`, `quantum-vulnerable`, or `none`. Default `secret,weak-now,exposed` |
 | `--quiet` | Leave out the closing line about installing on GitHub |
@@ -82,6 +82,10 @@ Checks more than code, one area at a time, and asks before each one. For every a
   npx @hardkeel/quantum-scan prove example.com
   ```
 
+  Not sure which hostnames you have? `quantum-scan hosts example.com` lists the names under your domain from public certificate logs (crt.sh), including old APIs and staging sites people forget. It reads the public log only and contacts none of the hosts; paste the list into `map` to check them. Add `--all` for names seen only on certificates that expired in the last year, or `--json`.
+
+  For each proved website that answers, `map` also reads its sign-in setup, if it has one, and reports how its tokens are signed: the OpenID Connect discovery document at `/.well-known/openid-configuration` and its signing keys, or SAML metadata if you list the metadata URL (for example `https://adfs.example.com/FederationMetadata/2007-06/FederationMetadata.xml`). RSA and ECDSA signatures are quantum-breakable, and SAML signing certificates tend to live for years, so they rank high. Unsigned tokens (`none`), RSA keys under 2048 bits and SHA-1 signatures are flagged as broken now. Keys hosted on a domain you haven't proved are not fetched.
+
 - **Network and connected equipment:** routers, switches, printers, cameras, storage boxes and smart devices on your own network. For each address it checks whether about 30 common ports answer, reads the title of any web page they serve and the certificate on secure admin pages, and reads the router's list of automatic port forwards (UPnP) if it publishes one. It flags Telnet and plain FTP, open remote desktop, VNC and remote support tools, devices still on their setup page, admin pages without encryption or with the factory certificate, open print ports, camera and recorder ports, unencrypted MQTT, open databases and Docker, and router forwards from the internet. It never logs in, tries a password, sends commands to equipment or changes a setting. Only private address ranges this computer is on (or other segments of your own network that you confirm), at most 1,024 addresses, one connection at a time per device. List fragile equipment, like older industrial or medical controllers, under `exclude` and it's never touched:
 
   ```json
@@ -95,7 +99,7 @@ Two more parts of the report aren't scans:
 - **Who can read your cloud data:** where your Terraform or CloudFormation stores data in cloud storage, databases, disks or backups with keys the provider holds, or with your key in the provider's key service. Those keys protect against a stolen disk, not against the provider, someone working there, or a legal demand made to them. For data no third party should be able to read, it recommends encrypting before upload or keeping the keys in an external key store you hold. Listed as advice, not scored.
 - **People and process:** 18 optional yes/no questions about what no scan can see: phishing and social-engineering training, call-back checks on payment and password requests, multi-factor sign-in, admin accounts, leavers, vendor access, default passwords, firmware, printer job storage, guest and payment network separation, containment, sandboxing, cloud keys, backups, a breach plan and logs. Your answers get their own score next to the technical findings. They're saved in `quantum-scan-map/people.json`, kept out of the scope file, and never sent anywhere.
 
-Results get the same readiness grade as a code scan, and are ranked by when to act: broken now, at risk from data recorded now and read later, long-lived signatures, then the rest. The map is written to `quantum-scan-map/` as `map.html` (a report you can open in any browser and save as a PDF), `map.json`, a CycloneDX CBOM and `activity.log`, which lists every connection and every file read, with the time and the reason. Nothing leaves your machine except the summary below.
+Results get the same readiness grade as a code scan, and are ranked by when to act: broken now, at risk from data recorded now and read later, long-lived signatures, then the rest. Each finding is also rated high, medium or low: internet-facing systems and keys that must stay trusted for years come first, short-lived signatures inside your own systems last. The map is written to `quantum-scan-map/` as `map.html` (a report you can open in any browser and save as a PDF), `map.json`, a CycloneDX CBOM (`map.cbom.json`), the findings as SARIF (`map.sarif.json`, for security tools that read SARIF; code findings point at their file and line) and `activity.log`, which lists every connection and every file read, with the time and the reason. Nothing leaves your machine except the summary below.
 
 For pipelines, save your answers to `quantum-scan.scope.json` when asked, then run `quantum-scan map --scope quantum-scan.scope.json`. It checks only what the file lists. Add `--fail-on broken` to fail the build when anything is broken now.
 
@@ -140,6 +144,25 @@ Everything is rounded into bands and tied to a random ID that links to nothing. 
 
 `DO_NOT_TRACK=1` is respected too.
 
+## SARIF and CycloneDX
+
+Results drop into the security tools you already use.
+
+**SARIF 2.1.0** (`--format sarif`) for GitHub code scanning and any tool that reads SARIF.
+
+- One rule per kind of problem, with ids that stay the same from run to run, like `weak-now/md5-hash`, `quantum-vulnerable/rsa-key` or `secret/aws-access-key`.
+- Each rule carries a `security-severity` score, so code scanning sorts alerts into Critical, High, Medium and Low. Anything to fix now (weak encryption, exposed settings, leaked keys) is an error. Encryption quantum computers will break is a warning, scored Medium or lower, so it lands in the plan rather than ahead of what is broken today.
+- Rules have help text with the fix. Paths are relative to the repository root, even when you scan a subfolder, and each result has a fingerprint that survives lines moving.
+- `quantum-scan map` also writes `map.sarif.json`. Code findings point to files and lines; findings on websites, network equipment and this machine name the site, address or setting instead. GitHub code scanning only shows results tied to a file, so upload the code scan's output there.
+
+**CycloneDX 1.6 CBOM** (`--cbom <file>`, or `--format cyclonedx` to print it) for Dependency-Track and other CycloneDX tools.
+
+- Every encryption method in use is a cryptographic asset, not only the ones to fix, with its primitive, key size or parameter set, what it's used for, its object identifier where one applies, its NIST quantum security level (0 means no protection against a quantum attacker), and every file and line or host where it was seen.
+- TLS and SSH findings are protocol assets of the right type. Certificate problems, like an expired certificate, are findings, not encryption methods, so they stay out of the inventory.
+- Post-quantum encryption already in use (ML-KEM, ML-DSA, SLH-DSA and hybrids) is marked `quantum-safe`, so the inventory shows progress as well as problems.
+
+Both are checked against the official SARIF 2.1.0 and CycloneDX 1.6 schemas.
+
 ## In GitHub Actions
 
 ```yaml
@@ -151,7 +174,7 @@ Everything is rounded into bands and tied to a random ID that links to nothing. 
     sarif_file: quantum-scan.sarif
 ```
 
-The migration report goes to the job summary. Code scanning results need a public repository or GitHub Advanced Security. To send nothing from your pipeline, set `QUANTUM_SCAN_SHARING: off` in the job's `env`.
+The migration report goes to the job summary. Code scanning results need a public repository or GitHub Advanced Security, and the job needs `security-events: write`. A complete workflow, with a weekly scan and the encryption inventory saved as an artifact, is in [docs/examples/code-scanning.yml](docs/examples/code-scanning.yml). To send nothing from your pipeline, set `QUANTUM_SCAN_SHARING: off` in the job's `env`.
 
 ## Contributing rules
 

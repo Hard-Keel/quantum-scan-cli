@@ -60,7 +60,7 @@ export function shortLabel(f: Finding): string {
   if (a.startsWith("RSA") && f.keySize !== undefined && f.keySize < 2048) return `RSA-${f.keySize} key`;
   if (a === "RSA") return "RSA key";
   if (a === "EC") return "Elliptic-curve key";
-  if (/(mode|signature|encryption)$/.test(a) || a.startsWith("TLS")) return a;
+  if (/(mode|signature|encryption|exchange)$/.test(a) || a.startsWith("TLS")) return a;
   const noun: Partial<Record<Finding["primitive"], string>> = {
     hash: "hash",
     "block-cipher": "cipher",

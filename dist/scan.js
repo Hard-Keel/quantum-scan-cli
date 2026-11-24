@@ -3,6 +3,7 @@ import { ALGORITHMS, CRYPTO_RULES, langFor } from "./rules.js";
 import { scanInfra } from "./infra.js";
 import { findSecrets, mask } from "./secrets.js";
 import { findPqc } from "./pqc.js";
+import { findInventory } from "./inventory.js";
 import { communityRulesFor } from "./community.js";
 const MAX_LINE = 2000;
 const TYPES_FILE = /\.d\.[cm]?ts$/;
@@ -183,6 +184,7 @@ function dedupe(findings) {
 export function scanFiles(files) {
     const findings = [];
     const pqc = [];
+    const inventory = [];
     let filesScanned = 0;
     for (const f of files) {
         if (!shouldScan(f.path))
@@ -190,10 +192,12 @@ export function scanFiles(files) {
         filesScanned++;
         findings.push(...scanFile(f.path, f.content, f.onlyLines));
         // Post-quantum use only counts in code that ships, like the problems do.
-        if (!TEST_PATH.test(f.path) && !EXAMPLE_PATH.test(f.path))
+        if (!TEST_PATH.test(f.path) && !EXAMPLE_PATH.test(f.path)) {
             pqc.push(...findPqc(f.path, f.content));
+            inventory.push(...findInventory(f.path, f.content).filter((i) => !f.onlyLines || f.onlyLines.has(i.line)));
+        }
     }
-    return { findings, filesScanned, pqc };
+    return { findings, filesScanned, pqc, inventory };
 }
 /** Parse a unified diff patch (GitHub's `patch` field) into the added lines of the new file. */
 export function patchAddedLines(patch) {

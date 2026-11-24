@@ -1,6 +1,6 @@
 // The encryption map report: text for the terminal, one self-contained HTML page, and JSON.
 // Written to the customer's own disk. Nothing here is sent anywhere.
-import { TIER_NOTES, TIER_TITLES } from "./map-types.js";
+import { RATING_TITLES, TIER_NOTES, TIER_TITLES } from "./map-types.js";
 import { toFinding } from "./map-rank.js";
 import { gradeSentence, readinessScore } from "./score.js";
 /** Post-quantum methods already in use count toward the score the same way they do in a code scan. */
@@ -13,6 +13,9 @@ export function buildMapReport(results, ranked, version, now = new Date(), accep
     const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
     for (const f of ranked)
         counts[f.tier]++;
+    const ratings = { high: 0, medium: 0, low: 0 };
+    for (const f of ranked)
+        ratings[f.rating ?? "low"]++;
     return {
         tool: "hard-keel-quantum-scan",
         version,
@@ -20,12 +23,17 @@ export function buildMapReport(results, ranked, version, now = new Date(), accep
         areas: results.map((r) => ({ area: r.area, checked: r.checked.length, skipped: r.skipped, errors: r.errors.map(({ target, kind, message }) => ({ target, kind, message })) })),
         score: readinessScore(ranked.map(toFinding), strengthSignals(strengths)),
         counts,
+        ratings,
         findings: ranked,
         strengths,
         accepted,
         cloudKeys: extras.cloudKeys,
         people: extras.people,
     };
+}
+/** "3 high, 2 medium, 1 low", leaving out any that are zero. */
+export function ratingsLine(r) {
+    return ["high", "medium", "low"].filter((k) => r.ratings[k]).map((k) => `${r.ratings[k]} ${k}`).join(", ");
 }
 export function peopleSentence(p) {
     return `People and process: ${p.inPlace} of ${p.answered} in place (${p.score}/100), answered ${p.answeredAt}.`;
@@ -49,14 +57,14 @@ export function mapText(r) {
         out.push(`  ${AREA_TITLES[a.area] ?? a.area}: ${bits.join(", ")}`);
     }
     const total = r.findings.length;
-    out.push("", total ? `${total} finding${total === 1 ? "" : "s"}, ranked by what breaks first.` : nothingChecked(r) ? "No scan areas were checked this time." : "Nothing found in the areas checked.");
+    out.push("", total ? `${total} finding${total === 1 ? "" : "s"} (${ratingsLine(r)}), ranked by what breaks first.` : nothingChecked(r) ? "No scan areas were checked this time." : "Nothing found in the areas checked.");
     for (const t of [1, 2, 3, 4]) {
         const list = r.findings.filter((f) => f.tier === t);
         if (!list.length)
             continue;
         out.push("", `${t}. ${TIER_TITLES[t]} (${list.length})`, `   ${TIER_NOTES[t]}`);
         for (const f of list.slice(0, 25))
-            out.push(`   ${f.target}  ${f.title}`, `      ${f.fix}`);
+            out.push(`   [${RATING_TITLES[f.rating ?? "low"]}] ${f.target}  ${f.title}`, `      ${f.fix}`);
         if (list.length > 25)
             out.push(`   ...and ${list.length - 25} more in the report.`);
     }
@@ -107,12 +115,16 @@ const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">
 /** The locked Hard Keel lockup: teal rings and the Inter wordmark, outlined to shapes so it renders the same offline, with no font.
  * Colors are plain attributes (CSS variables don't work in SVG attributes). The wordmark takes the text color, as on hardkeel.com. */
 const LOGO = `<svg class="logo" viewBox="0 0 472 72" role="img" aria-label="Hard Keel"><g class="rings" transform="scale(1.125)" fill="none" stroke="#5aa99d" stroke-width="2.2" stroke-linecap="round"><path d="M 53.01 41.35 A 23 23 0 1 1 24.13 10.39"/><path d="M 17.43 26.70 A 15.5 15.5 0 1 1 40.89 44.70"/><path d="M 29.37 40.08 A 8.5 8.5 0 1 1 36.25 24.64"/></g><g class="dots" transform="scale(1.125)" fill="#5aa99d"><circle cx="32" cy="32" r="2.2"/><circle cx="53.01" cy="41.35" r="1.8"/><circle cx="17.43" cy="26.70" r="1.6"/><circle cx="29.37" cy="40.08" r="1.4"/></g><g class="wm" transform="translate(100,56) scale(0.02685,-0.02685)" fill="currentColor"><path d="M150 0H417V649H1110V0H1377V1490H1110V874H417V1490H150ZM1863 0H2155L2277 369H2834L2961 0H3254L2722 1490H2383ZM2348 584 2411 774C2452 907 2497 1074 2550 1282C2605 1076 2652 911 2696 774L2761 584ZM3739 0H4006V547H4284L4577 0H4876L4553 592C4729 662 4821 811 4821 1013C4821 1297 4639 1490 4296 1490H3739ZM4006 768V1266H4255C4458 1266 4548 1172 4548 1013C4548 855 4458 768 4257 768ZM5865 0C6319 0 6586 281 6586 747C6586 1210 6319 1490 5875 1490H5361V0ZM5628 231V1259H5859C6164 1259 6323 1088 6323 747C6323 403 6164 231 5852 231ZM8053 0H8320V447L8523 668L8975 0H9290L8708 845L9280 1490H8948L8557 1044C8459 930 8386 836 8316 729L8320 1048V1490H8053ZM9779 0H10751V225H10046V641H10695V863H10046V1265H10747V1490H9779ZM11305 0H12277V225H11572V641H12221V863H11572V1265H12273V1490H11305ZM12831 0H13756V225H13098V1490H12831Z"/></g></svg>`;
+const ORDER = { high: 0, medium: 1, low: 2 };
+const pill = (r) => (r ? `<span class="rate ${r}">${RATING_TITLES[r]}</span>` : "");
 export function groupFindings(list) {
     const groups = new Map();
     for (const f of list) {
         const key = `${f.area}\u0000${f.ruleId}\u0000${f.title}\u0000${f.fix}`;
-        const g = groups.get(key) ?? { area: AREA_TITLES[f.area] ?? f.area, title: f.title, fix: f.fix, targets: [] };
+        const g = groups.get(key) ?? { area: AREA_TITLES[f.area] ?? f.area, title: f.title, fix: f.fix, targets: [], rating: f.rating };
         g.targets.push(f.target);
+        if (f.rating && (!g.rating || ORDER[f.rating] < ORDER[g.rating]))
+            g.rating = f.rating; // a group is as urgent as its most urgent place
         groups.set(key, g);
     }
     return [...groups.values()];
@@ -123,7 +135,7 @@ const places = (targets) => {
     const more = targets.length > MAX_PLACES ? `<span class="more">and ${targets.length - MAX_PLACES} more, listed in map.json</span>` : "";
     return `<div class="places">${shown}${more}</div>`;
 };
-const item = (g, num) => `<article class="item"><div class="num">${num}</div><div class="body"><h3>${esc(g.title)}</h3><div class="meta">${esc(g.area)}${g.targets.length > 1 ? ` · ${g.targets.length} places` : ""}</div>${places(g.targets)}<p class="fix"><span class="label">How to fix</span>${esc(g.fix)}</p></div></article>`;
+const item = (g, num) => `<article class="item"><div class="num">${num}</div><div class="body"><h3>${esc(g.title)}</h3><div class="meta">${pill(g.rating)}${esc(g.area)}${g.targets.length > 1 ? ` · ${g.targets.length} places` : ""}</div>${places(g.targets)}<p class="fix"><span class="label">How to fix</span>${esc(g.fix)}</p></div></article>`;
 const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 const longDate = (iso) => new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
 export function mapHtml(r, activity) {
@@ -141,12 +153,13 @@ export function mapHtml(r, activity) {
         ? `<div class="verdict small"><div class="badge ${p.score >= 90 ? "good" : p.score >= 60 ? "ok" : "bad"}">${p.score}</div><div><div class="score">People and process <strong>${p.inPlace}</strong><span class="of"> of ${p.answered} in place</span></div><p>From your own answers to the checklist, scored on their own.</p></div></div>`
         : "";
     const stats = `<div class="stats">${byTier.map(({ t }) => `<div class="stat t${t}"><div class="n">${r.counts[t]}</div><div class="k">${esc(TIER_TITLES[t])}</div></div>`).join("")}</div>`;
+    const ratingLine = total ? `<p class="scope"><span class="label">Rated</span>${["high", "medium", "low"].map((k) => `${pill(k)} ${r.ratings[k]}`).join(" &nbsp; ")}</p>` : "";
     const checkedLine = r.areas.length
         ? `<p class="scope"><span class="label">Checked</span>${r.areas.map((a) => `${esc(AREA_TITLES[a.area] ?? a.area)} (${a.checked})`).join(" · ")}</p>`
         : "";
     const first = byTier.flatMap(({ t, groups }) => groups.map((x, i) => ({ x, num: `${t}.${i + 1}` }))).slice(0, 3);
     const firstSection = first.length
-        ? `<section class="first"><h2>Start here</h2><p class="note">The ${first.length === 1 ? "most urgent item" : `${first.length} most urgent items`}. Everything else is ranked below.</p><ol>${first.map(({ x, num }) => `<li><span class="num">${num}</span><div><strong>${esc(x.title)}</strong>${x.targets.length > 1 ? ` <span class="muted">(${x.targets.length} places)</span>` : ` <span class="muted">${esc(x.targets[0])}</span>`}<div class="fix">${esc(x.fix)}</div></div></li>`).join("")}</ol></section>`
+        ? `<section class="first"><h2>Start here</h2><p class="note">The ${first.length === 1 ? "most urgent item" : `${first.length} most urgent items`}. Everything else is ranked below.</p><ol>${first.map(({ x, num }) => `<li><span class="num">${num}</span><div>${pill(x.rating)}<strong>${esc(x.title)}</strong>${x.targets.length > 1 ? ` <span class="muted">(${x.targets.length} places)</span>` : ` <span class="muted">${esc(x.targets[0])}</span>`}<div class="fix">${esc(x.fix)}</div></div></li>`).join("")}</ol></section>`
         : "";
     const tiers = byTier
         .filter(({ groups }) => groups.length)
@@ -226,6 +239,8 @@ h2{font-size:22px;letter-spacing:-.01em;margin:0 0 6px;font-weight:650}
 .item .body{min-width:0;flex:1}
 h3{font-size:17px;margin:0;font-weight:600;line-height:1.4}
 .meta{font-size:13px;color:var(--faint);margin-top:2px}
+.rate{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border:1px solid currentColor;border-radius:999px;margin-right:8px;line-height:1.5}
+.rate.high{color:var(--bad)}.rate.medium{color:var(--warn)}.rate.low{color:var(--muted)}
 .places{display:flex;flex-wrap:wrap;gap:4px 14px;margin:8px 0 0;font:13px/1.5 "IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;color:var(--muted);word-break:break-all}
 .places .more{font-family:inherit;color:var(--faint)}
 .item .fix{margin:12px 0 0;color:var(--fg)}
@@ -267,6 +282,7 @@ footer{margin-top:36pt;break-inside:avoid}
 ${verdict}
 ${peopleVerdict}
 ${stats}
+${ratingLine}
 ${checkedLine}
 <div class="actions"><button type="button" onclick="window.print()">Save as PDF</button><span class="hint">In the print window, choose Save as PDF.</span></div>
 </div>

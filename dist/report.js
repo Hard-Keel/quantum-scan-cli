@@ -63,7 +63,7 @@ export function shortLabel(f) {
         return "RSA key";
     if (a === "EC")
         return "Elliptic-curve key";
-    if (/(mode|signature|encryption)$/.test(a) || a.startsWith("TLS"))
+    if (/(mode|signature|encryption|exchange)$/.test(a) || a.startsWith("TLS"))
         return a;
     const noun = {
         hash: "hash",

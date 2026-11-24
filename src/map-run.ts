@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { applyIgnore, applyIgnoreTargets, IGNORE_FILE, parseIgnore } from "./ignore.ts";
 import { buildCbom } from "./cbom.ts";
+import { buildMapSarif } from "./map-sarif.ts";
 import { ActivityLog } from "./map-activity.ts";
 import { CARDS, cardText } from "./map-areas.ts";
 import { runHost, type HostIO } from "./map-host.ts";
@@ -17,6 +18,7 @@ import { cloudKeyAdvice, type CloudKeyAdvice } from "./map-cloud-keys.ts";
 import { isPrivateRange, machineRanges, parseRange, realNetIO, runNetwork, suggestedRanges, type NetIO, type NetworkOptions, type NetworkScope } from "./map-network.ts";
 import { askPeople, parseAnswers, QUESTIONS, scorePeople, type Answer } from "./map-people.ts";
 import { proofRecord, runWeb, type WebOptions } from "./map-web.ts";
+import type { InventoryItem } from "./inventory.ts";
 import { scanFiles } from "./scan.ts";
 import type { AreaName, ErrorKind, RunFacts } from "./share.ts";
 import { INDUSTRIES, SIZES, type Industry, type Settings, type Size } from "./share-config.ts";
@@ -234,6 +236,7 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
   const results: AreaResult[] = [];
   const ignored: Record<string, number> = {};
   const pqcCounts: Record<string, number> = {};
+  const inventory: InventoryItem[] = [];
   const cloudKeys: CloudKeyAdvice[] = [];
 
   if (scope.areas.code) {
@@ -244,7 +247,8 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
       try {
         const walked = walkFolder(dir);
         for (const u of walked.unreadable) res.errors.push({ area: "code", target: `${folder}/${u.path}`.replace(/^\.\//, ""), kind: u.reason === "permission denied" ? "permission" : "read", message: `couldn't read (${u.reason})` });
-        const { findings, pqc, filesScanned } = scanFiles(walked.files);
+        const { findings, pqc, filesScanned, inventory: inv } = scanFiles(walked.files);
+        inventory.push(...inv);
         for (const f of walked.files) for (const a of cloudKeyAdvice(f.path, f.content)) cloudKeys.push({ ...a, target: `${folder}/${a.target}`.replace(/^\.\//, "") });
         const ign = join(dir, IGNORE_FILE);
         const { kept, ignored: ig } = applyIgnore(findings, existsSync(ign) ? parseIgnore(readFileSync(ign, "utf8")) : []);
@@ -261,7 +265,7 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
 
   if (scope.areas.web) {
     const token = scope.ownershipToken ?? o.settings.ownershipToken;
-    const res = await runWeb(scope.areas.web.targets, log, { ...o.web, token });
+    const res = await runWeb(scope.areas.web.targets, log, { version: o.version, ...o.web, token });
     results.push(res);
     if (res.unproved.length) {
       write("\nSome addresses were skipped because their domain isn't proved yet. To prove one, add this DNS record, then run again:\n");
@@ -295,9 +299,10 @@ export async function runMap(o: MapOptions): Promise<MapOutcome> {
   const report = buildMapReport(results, ranked, o.version, new Date(), accepted, { cloudKeys, people: people ? { answeredAt: people.answeredAt, ...scorePeople(people.answers)! } : null });
   writeFileSync(join(o.outDir, "map.json"), JSON.stringify(report, null, 2) + "\n");
   writeFileSync(join(o.outDir, "map.html"), mapHtml(report, log.entries));
-  writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }), null, 2) + "\n");
+  writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }, inventory), null, 2) + "\n");
+  writeFileSync(join(o.outDir, "map.sarif.json"), JSON.stringify(buildMapSarif(ranked, o.version), null, 2) + "\n");
   const reportPath = resolve(o.outDir, "map.html");
-  process.stdout.write(mapText(report) + `\n\nYour report: ${reportPath}\nOpen it in a browser. For a PDF, choose Print, then Save as PDF.\nAlso wrote map.json, map.cbom.json and activity.log. They stay on this machine.\n`);
+  process.stdout.write(mapText(report) + `\n\nYour report: ${reportPath}\nOpen it in a browser. For a PDF, choose Print, then Save as PDF.\nAlso wrote map.json, map.cbom.json (CycloneDX inventory), map.sarif.json (SARIF findings) and activity.log. They stay on this machine.\n`);
   if (o.offerOpen ?? (o.interactive && Boolean(process.stdout.isTTY) && !process.env.CI)) {
     const p = (o.prompter ?? terminalPrompter)();
     try {
