@@ -86,8 +86,19 @@ function whenText(f: Finding): string {
   return "Fix this now. It doesn't take a quantum computer to break.";
 }
 
+export interface SarifRule {
+  id: string;
+  name: string;
+  shortDescription: { text: string };
+  fullDescription: { text: string };
+  help: { text: string; markdown: string };
+  helpUri: string;
+  defaultConfiguration: { level: Level };
+  properties: { tags: string[]; precision: string; "problem.severity": string; "security-severity": string };
+}
+
 function sarifFor(items: Located[], toolVersion: string, opts: SarifOptions) {
-  const rules = new Map<string, { worst: Severity; rule: Record<string, unknown> }>();
+  const rules = new Map<string, { worst: Severity; rule: SarifRule }>();
   for (const { finding: f } of items) {
     const id = sarifRuleId(f);
     const existing = rules.get(id);

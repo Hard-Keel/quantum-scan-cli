@@ -31,13 +31,12 @@ const mapFinding = (o: Partial<MapFinding>): MapFinding => ({
 
 test("sarif: GitHub severity scores keep quantum-breakable encryption below what is broken now", () => {
   const run = buildSarif(scanFile("a.py", SRC), "0.0.0").runs[0];
-  const sev = Object.fromEntries(run.tool.driver.rules.map((r) => [r.id, (r.properties as Record<string, string>)["security-severity"]]));
+  const sev = Object.fromEntries(run.tool.driver.rules.map((r) => [r.id, r.properties["security-severity"]]));
   assert.equal(sev["weak-now/md5-hash"], "5.5");
   assert.ok(Number(sev["quantum-vulnerable/ecdh-key-exchange"]) < 7);
   for (const r of run.tool.driver.rules) {
-    const p = r.properties as { tags: string[] };
-    assert.ok(p.tags.includes("security"), "code scanning only treats rules tagged security as security alerts");
-    assert.ok((r.help as { markdown: string }).markdown.includes("**Fix:**"));
+    assert.ok(r.properties.tags.includes("security"), "code scanning only treats rules tagged security as security alerts");
+    assert.ok(r.help.markdown.includes("**Fix:**"));
   }
   assert.ok(run.tool.driver.rules.find((r) => r.id.startsWith("quantum-vulnerable/"))!.properties.tags.includes("post-quantum"));
 });
