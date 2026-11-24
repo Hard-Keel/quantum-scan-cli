@@ -4,7 +4,7 @@
 // and leaked keys in a folder,
 // and writes an encryption inventory (CycloneDX CBOM) and a migration report.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { walkFolder } from "./walk.js";
 import { buildCbom } from "./cbom.js";
 import { migrationReportMarkdown, prSummaryLine, shortLabel, sortFindings } from "./report.js";
@@ -35,7 +35,9 @@ Usage:
   quantum-scan config <setting>     Sharing, offline mode, industry and size
 
 Options:
-  --format <text|json|sarif>   What to print (default: text)
+  --format <text|json|sarif|cyclonedx>
+                               What to print (default: text). cyclonedx prints the
+                               encryption inventory (CycloneDX 1.6 CBOM)
   --output <file>              Write the --format output to a file instead
   --cbom <file>                Write the encryption inventory (CycloneDX 1.6 CBOM)
   --report <file>              Write the migration report (Markdown)
@@ -85,6 +87,20 @@ function parseArgs(argv) {
     }
     return { opts, dir: rest[0] ?? "." };
 }
+/**
+ * The scanned folder's path inside its git repository ("" at the root), so SARIF paths match the
+ * repository. Outside a repository, paths stay relative to the scanned folder.
+ */
+export function repoPrefix(dir) {
+    const abs = resolve(dir);
+    for (let d = abs;; d = dirname(d)) {
+        if (existsSync(join(d, ".git")))
+            return relative(d, abs).split("\\").join("/");
+        if (dirname(d) === d)
+            return "";
+    }
+}
+const quantumSafeUses = (pqc) => pqc.map((p) => ({ algorithm: p.algorithm, use: p.use, location: p.file, line: p.line }));
 function textReport(findings, filesScanned, quiet, score) {
     const out = [`Hard Keel Quantum Scan · ${filesScanned} file${filesScanned === 1 ? "" : "s"} scanned`, "", gradeSentence(score), ""];
     if (!findings.length) {
@@ -146,8 +162,9 @@ export function scanCommand(argv) {
     if (badgePath)
         writeFileSync(badgePath, badgeSvg(score) + "\n");
     const cbomPath = str("cbom");
+    const cbom = () => buildCbom(findings, { repo, toolVersion: VERSION, quantumSafe: quantumSafeUses(pqc) });
     if (cbomPath)
-        writeFileSync(cbomPath, JSON.stringify(buildCbom(findings, { repo, toolVersion: VERSION }), null, 2) + "\n");
+        writeFileSync(cbomPath, JSON.stringify(cbom(), null, 2) + "\n");
     const reportPath = str("report");
     if (reportPath)
         writeFileSync(reportPath, migrationReportMarkdown(repo, findings, new Date().toISOString().slice(0, 10), score) + "\n");
@@ -156,11 +173,13 @@ export function scanCommand(argv) {
     if (format === "json")
         body = JSON.stringify({ tool: "hard-keel-quantum-scan", version: VERSION, filesScanned, score, findings }, null, 2);
     else if (format === "sarif")
-        body = JSON.stringify(buildSarif(findings, VERSION), null, 2);
+        body = JSON.stringify(buildSarif(findings, VERSION, { uriPrefix: repoPrefix(dir), score }), null, 2);
+    else if (format === "cyclonedx" || format === "cbom")
+        body = JSON.stringify(cbom(), null, 2);
     else if (format === "text")
         body = textReport(findings, filesScanned, opts.quiet === true, score);
     else {
-        console.error(`Unknown --format "${format}". Use text, json or sarif.`);
+        console.error(`Unknown --format "${format}". Use text, json, sarif or cyclonedx.`);
         return { code: 2 };
     }
     const outPath = str("output");

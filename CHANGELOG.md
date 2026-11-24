@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Better results in GitHub code scanning.** SARIF rules now carry a severity score, so code scanning sorts alerts into Critical, High, Medium and Low, with encryption quantum computers will break kept at Medium or lower. Rules are tagged, have help text with the fix, and paths are relative to the repository root when you scan a subfolder. Each result has a fingerprint that survives lines moving. Rule ids for exposed settings no longer change with the ports found (for example `exposed/open-to-the-internet`), so those alerts keep their history from this version on.
+- **`--format cyclonedx`** prints the encryption inventory, for piping into other tools.
+- **A fuller encryption inventory.** The CBOM now has a serial number, a dependency list, object identifiers for common algorithms, and the post-quantum encryption already in use, marked quantum-safe. TLS and SSH findings are protocol assets of the right type, and certificate problems (expired, wrong name) are no longer listed as encryption methods.
+- **`quantum-scan map` writes `map.sarif`**, with findings on websites, network equipment and this machine located by site, address or setting.
+- "SSH key exchange" no longer reads "SSH key exchange key exchange" in reports.
+
 ## 0.3.2
 
 - **Finds encryption in signing and token libraries.** Recognizes JWT and JOSE algorithm names (RS256, ES256, EdDSA, RSA-OAEP, ECDH-ES and the rest) in JavaScript, TypeScript, Python, Go and Java; Node's RSA and ECDSA signing names; RSA public-key encryption; JWK key types and curves; elliptic, @noble/curves and tweetnacl; golang-jwt signing methods; Java JWT constants; and python-rsa and paramiko key generation. On 259 popular npm packages that handle encryption or tokens, the scanner finds quantum-breakable encryption in 52.

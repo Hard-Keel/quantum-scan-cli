@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { applyIgnore, applyIgnoreTargets, IGNORE_FILE, parseIgnore } from "./ignore.js";
 import { buildCbom } from "./cbom.js";
+import { buildMapSarif } from "./sarif.js";
 import { ActivityLog } from "./map-activity.js";
 import { CARDS, cardText } from "./map-areas.js";
 import { runHost } from "./map-host.js";
@@ -19,6 +20,16 @@ import { proofRecord, runWeb } from "./map-web.js";
 import { scanFiles } from "./scan.js";
 import { INDUSTRIES, SIZES } from "./share-config.js";
 import { walkFolder } from "./walk.js";
+/** A map finding for SARIF: code findings keep their file and line, the rest name the site, device or setting. */
+function sarifItem(f) {
+    const finding = toFinding(f);
+    if (f.area === "code") {
+        const m = f.target.match(/^(.*):(\d+)$/);
+        if (m)
+            return { finding: { ...finding, file: m[1], line: Number(m[2]) }, target: { name: m[1], area: "code" } };
+    }
+    return { finding, target: { name: f.target, area: f.area } };
+}
 export const SCOPE_FILE = "quantum-scan.scope.json";
 export function parseScope(text) {
     let v;
@@ -261,9 +272,11 @@ export async function runMap(o) {
     const report = buildMapReport(results, ranked, o.version, new Date(), accepted, { cloudKeys, people: people ? { answeredAt: people.answeredAt, ...scorePeople(people.answers) } : null });
     writeFileSync(join(o.outDir, "map.json"), JSON.stringify(report, null, 2) + "\n");
     writeFileSync(join(o.outDir, "map.html"), mapHtml(report, log.entries));
-    writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }), null, 2) + "\n");
+    const quantumSafe = report.strengths.map((s) => ({ algorithm: s.algorithm, use: /DSA/.test(s.algorithm) ? "signature" : "key-establishment", location: s.target }));
+    writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version, quantumSafe }), null, 2) + "\n");
+    writeFileSync(join(o.outDir, "map.sarif"), JSON.stringify(buildMapSarif(ranked.map(sarifItem), o.version, { score: report.score }), null, 2) + "\n");
     const reportPath = resolve(o.outDir, "map.html");
-    process.stdout.write(mapText(report) + `\n\nYour report: ${reportPath}\nOpen it in a browser. For a PDF, choose Print, then Save as PDF.\nAlso wrote map.json, map.cbom.json and activity.log. They stay on this machine.\n`);
+    process.stdout.write(mapText(report) + `\n\nYour report: ${reportPath}\nOpen it in a browser. For a PDF, choose Print, then Save as PDF.\nAlso wrote map.json, map.cbom.json, map.sarif and activity.log. They stay on this machine.\n`);
     if (o.offerOpen ?? (o.interactive && Boolean(process.stdout.isTTY) && !process.env.CI)) {
         const p = (o.prompter ?? terminalPrompter)();
         try {

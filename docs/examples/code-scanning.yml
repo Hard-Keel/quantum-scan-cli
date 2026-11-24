@@ -1,0 +1,41 @@
+# Hard Keel Quantum Scan in GitHub code scanning.
+# Copy to .github/workflows/quantum-scan.yml. Findings show up under Security > Code scanning,
+# and on pull requests next to the lines that changed.
+name: Quantum Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, so new findings in old code still turn up
+
+permissions:
+  contents: read
+  security-events: write # upload results to code scanning
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Hard-Keel/quantum-scan-cli@v0
+        id: scan
+        with:
+          fail-on: secret,weak-now,exposed
+        env:
+          QUANTUM_SCAN_SHARING: off # optional: send nothing from the pipeline
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: quantum-scan
+
+      # The encryption inventory (CycloneDX 1.6 CBOM), for Dependency-Track or any CycloneDX tool.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: encryption-inventory
+          path: quantum-scan.cbom.json
