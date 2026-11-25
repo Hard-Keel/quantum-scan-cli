@@ -9,10 +9,30 @@ export function tierOf(f) {
     return 4;
 }
 const SEV = { critical: 0, high: 1, medium: 2, low: 3 };
+const RATE = { high: 0, medium: 1, low: 2 };
+/** Key exchange and public-key encryption protect data someone can record or store and read later. */
+const recordable = (f) => f.primitive === "key-agreement" || f.primitive === "public-key-encryption";
+export function ratingOf(f, tier = tierOf(f)) {
+    if (tier === 1)
+        return f.severity === "critical" || f.severity === "high" ? "high" : f.severity === "medium" ? "medium" : "low";
+    if (tier === 2 || tier === 3)
+        return "high";
+    return f.internetFacing || f.longLived || recordable(f) ? "medium" : "low";
+}
+/** What breaks first: tier, then rating, then internet-facing and long-lived ahead of the rest, then severity. */
 export function rank(findings) {
     return findings
-        .map((f) => ({ ...f, tier: tierOf(f) }))
-        .sort((a, b) => a.tier - b.tier || SEV[a.severity] - SEV[b.severity] || a.area.localeCompare(b.area) || a.target.localeCompare(b.target));
+        .map((f) => {
+        const tier = tierOf(f);
+        return { ...f, tier, rating: ratingOf(f, tier) };
+    })
+        .sort((a, b) => a.tier - b.tier ||
+        RATE[a.rating] - RATE[b.rating] ||
+        Number(b.internetFacing) - Number(a.internetFacing) ||
+        Number(!!b.longLived) - Number(!!a.longLived) ||
+        SEV[a.severity] - SEV[b.severity] ||
+        a.area.localeCompare(b.area) ||
+        a.target.localeCompare(b.target));
 }
 export function fromCodeFinding(f) {
     return {

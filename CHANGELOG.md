@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Find forgotten hostnames.** `quantum-scan hosts example.com` lists the names under a domain from public certificate logs (crt.sh), so old APIs, staging sites and vendor portals on your domain don't get missed. One request to the public log; none of the hosts are contacted. Respects offline mode.
+- **Fairer grade on older Node.js.** If your Node.js can't offer ML-KEM (it needs OpenSSL 3.5 or later), a TLS 1.3 website is no longer marked down for "no quantum-safe option". The map lists it as not tested instead.
+- **Full encryption inventory.** The CBOM (`--cbom`, and `map.cbom.json` from `map`) now lists every algorithm in use, not only the ones to fix: AES with key size and mode, ChaCha20-Poly1305, SHA-2, SHA-3, HMAC, PBKDF2, scrypt, Argon2, bcrypt and HKDF, plus ML-KEM, ML-DSA and SLH-DSA with their NIST security level. Each entry says what it's used for (encrypt, digest, sign and so on). `--format json` includes it as `inventory`, and the text summary names the top ones. It never changes the grade.
+- **Sign-in signing check.** For proved websites, `map` reads the OpenID Connect discovery document (and its signing keys) or listed SAML metadata, and reports the algorithm sign-in tokens and assertions are signed with. RSA and ECDSA are quantum-breakable; unsigned tokens, RSA under 2048 bits and SHA-1 signatures are broken now. Only domains you proved are read.
+- **High, medium and low ratings.** Every `map` finding now carries a plain rating, shown in the terminal, as a label in `map.html`, and as `rating` and `ratings` in `map.json`. Internet-facing systems and long-lived keys rank first. The tiers and the grade are unchanged.
+- **SARIF and CycloneDX everywhere.** `map` now also writes `map.sarif.json`, its findings in SARIF 2.1.0 with the rating, tier and area on each, for security tools that read SARIF. Code findings point at their file and line; websites, network and machine findings name the place they were found. `--format cyclonedx` prints the encryption inventory, the same CBOM as `--cbom`. For GitHub code scanning, upload the code scan's `--format sarif` output, since GitHub only shows results tied to a file.
+- The website check now accepts either hybrid ML-KEM key exchange, X25519MLKEM768 or SecP256r1MLKEM768, in the same single handshake.
+- **Better results in GitHub code scanning.** Encryption quantum computers will break is now scored Medium or lower, so it lands in the plan rather than ahead of what is broken now. Rules have help text with the fix and a link. Paths start at the repository root when you scan a subfolder, so code scanning can place them. Rule ids for exposed settings no longer change with the ports found (for example `exposed/open-to-the-internet`), so those alerts keep their history from this version on. A sample workflow is in `docs/examples/code-scanning.yml`.
+- **A more accurate encryption inventory.** SSH findings are now SSH protocol assets instead of TLS 1.0/1.1, certificate problems (expired, wrong name) are no longer listed as encryption methods, and common algorithms carry their object identifier.
+- "SSH key exchange" no longer reads "SSH key exchange key exchange" in reports.
+
 ## 0.3.2
 
 - **Finds encryption in signing and token libraries.** Recognizes JWT and JOSE algorithm names (RS256, ES256, EdDSA, RSA-OAEP, ECDH-ES and the rest) in JavaScript, TypeScript, Python, Go and Java; Node's RSA and ECDSA signing names; RSA public-key encryption; JWK key types and curves; elliptic, @noble/curves and tweetnacl; golang-jwt signing methods; Java JWT constants; and python-rsa and paramiko key generation. On 259 popular npm packages that handle encryption or tokens, the scanner finds quantum-breakable encryption in 52.

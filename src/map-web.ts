@@ -9,6 +9,7 @@ import { randomBytes, X509Certificate } from "node:crypto";
 import { ALGORITHMS } from "./rules.ts";
 import type { ActivityLog } from "./map-activity.ts";
 import { emptyResult, type AreaResult, type MapFinding } from "./map-types.ts";
+import { checkSignin, httpGet, type HttpGet } from "./map-signin.ts";
 import type { ErrorKind } from "./share.ts";
 
 // ---------- targets and ownership ----------
@@ -18,11 +19,16 @@ export interface WebTarget {
   port: number;
   kind: "tls" | "ssh";
   label: string; // host:port
+  /** A path the person listed after the host, like a SAML metadata URL. Kept as typed. */
+  path?: string;
 }
 
 const HOSTNAME = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
 
 /** "example.com", "api.example.com:8443", "git.example.com:22", "ssh://git.example.com". IP addresses are refused. */
+/** Paths that look like a sign-in setup document. */
+const SIGNIN_PATH = /well-known|openid|metadata|saml|federation|\.xml$/i;
+
 export function parseTarget(raw: string): WebTarget | { error: string } {
   let s = raw.trim().toLowerCase();
   let kind: "tls" | "ssh" | null = null;
@@ -32,6 +38,10 @@ export function parseTarget(raw: string): WebTarget | { error: string } {
     else if (scheme[1] !== "https") return { error: `${raw}: use a hostname, https:// or ssh://` };
     s = s.slice(scheme[0].length);
   }
+  // A path is kept only when it looks like sign-in setup (OpenID Connect discovery or SAML metadata);
+  // any other page is just the website. It keeps its case (SAML paths often have capitals); query and fragment are dropped.
+  const rawPath = raw.trim().replace(/^[a-z]+:\/\//i, "").match(/^[^/]*(\/[^?#]*)/)?.[1];
+  const path = kind !== "ssh" && rawPath && SIGNIN_PATH.test(rawPath) ? rawPath : undefined;
   s = s.replace(/\/.*$/, "");
   let port = kind === "ssh" ? 22 : 443;
   const pm = s.match(/^(.*):(\d{1,5})$/);
@@ -43,7 +53,7 @@ export function parseTarget(raw: string): WebTarget | { error: string } {
   if (!HOSTNAME.test(s)) return { error: `${raw}: not a hostname` };
   if (port < 1 || port > 65535) return { error: `${raw}: bad port` };
   kind ??= port === 22 ? "ssh" : "tls";
-  return { host: s, port, kind, label: `${s}:${port}` };
+  return { host: s, port, kind, label: `${s}:${port}`, ...(path && kind === "tls" ? { path } : {}) };
 }
 
 export const PROOF_PREFIX = "_hardkeel-scan";
@@ -402,12 +412,14 @@ export const acceptsSuites: CipherProbeFn = (host, port, suites, servername) =>
   });
 
 const GAP_MS = 250;
+/** Hybrid ML-KEM groups offered in the one probe handshake. Either answer counts. */
+export const HYBRID_GROUPS = "X25519MLKEM768:SecP256r1MLKEM768";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type HandshakeFn = (host: string, port: number, opts: Partial<ConnectionOptions>) => Promise<Handshake>;
 
 /** About 6 handshakes, one at a time: normal, hybrid ML-KEM, TLS 1.0, TLS 1.1, 3DES, static RSA key exchange. */
-export async function checkTls(t: WebTarget, log: ActivityLog, res: AreaResult, hs: HandshakeFn = handshake, gap = GAP_MS, probe: CipherProbeFn = acceptsSuites): Promise<void> {
+export async function checkTls(t: WebTarget, log: ActivityLog, res: AreaResult, hs: HandshakeFn = handshake, gap = GAP_MS, probe: CipherProbeFn = acceptsSuites, hybridTestable = canTestHybrid()): Promise<void> {
   log.record("web", t.label, "TLS handshake, normal settings");
   const main = await hs(t.host, t.port, { minVersion: "TLSv1.2" });
   if (!main.ok) {
@@ -431,20 +443,23 @@ export async function checkTls(t: WebTarget, log: ActivityLog, res: AreaResult, 
 
   // Key exchange: does it offer the quantum-safe hybrid?
   let hybrid: boolean | null = null;
-  if (main.protocol === "TLSv1.3" && canTestHybrid()) {
+  if (main.protocol === "TLSv1.3" && hybridTestable) {
     await sleep(gap);
-    log.record("web", t.label, "TLS handshake offering only hybrid X25519 + ML-KEM-768");
-    const h = await hs(t.host, t.port, { minVersion: "TLSv1.3", ecdhCurve: "X25519MLKEM768" });
+    log.record("web", t.label, "TLS handshake offering only hybrid ML-KEM key exchange (X25519 or P-256 with ML-KEM-768)");
+    const h = await hs(t.host, t.port, { minVersion: "TLSv1.3", ecdhCurve: HYBRID_GROUPS });
     hybrid = h.ok;
   }
   if (hybrid) {
-    res.strengths.push({ area: "web", target: t.label, algorithm: "Hybrid ML-KEM key exchange", title: "Offers quantum-safe hybrid key exchange (X25519 + ML-KEM-768)" });
+    res.strengths.push({ area: "web", target: t.label, algorithm: "Hybrid ML-KEM key exchange", title: "Offers quantum-safe hybrid key exchange (ML-KEM-768)" });
+  } else if (hybrid === null && main.protocol === "TLSv1.3") {
+    // TLS 1.3 but this Node.js can't offer ML-KEM, so we can't tell. Say so instead of marking the site down for our limitation.
+    res.skipped.push({ target: t.label, reason: "hybrid ML-KEM key exchange not tested: this Node.js needs OpenSSL 3.5 or later (current Node.js 22 or 24 has it). Not counted against the grade." });
   } else {
     const kx = main.keyExchange ?? "ECDH";
     res.findings.push({
       ...base,
       ruleId: "web-tls-kex",
-      title: `Key exchange uses ${kx}${hybrid === null ? "" : " with no quantum-safe option"}${main.protocol !== "TLSv1.3" ? `, over ${main.protocol ?? "an old TLS version"}` : ""}`,
+      title: `Key exchange uses ${kx}${main.protocol === "TLSv1.3" ? " with no quantum-safe option" : `, over ${main.protocol ?? "an old TLS version"}`}`,
       algorithm: "TLS key exchange",
       primitive: "key-agreement",
       risk: "quantum-vulnerable",
@@ -454,7 +469,6 @@ export async function checkTls(t: WebTarget, log: ActivityLog, res: AreaResult, 
           ? "Turn on hybrid X25519MLKEM768 key exchange. Recent OpenSSL (3.5+), BoringSSL, nginx, Caddy and most CDNs support it."
           : "Move to TLS 1.3 first, then turn on hybrid X25519MLKEM768 key exchange.",
     });
-    if (hybrid === null && main.protocol === "TLSv1.3") res.skipped.push({ target: t.label, reason: "this Node.js can't test hybrid ML-KEM key exchange (needs OpenSSL 3.5 or later)" });
   }
 
   if (main.cert) {
@@ -634,6 +648,12 @@ export interface WebOptions {
   ssh?: SshFn;
   cipherProbe?: CipherProbeFn;
   gapMs?: number;
+  /** Whether this Node.js can offer ML-KEM. Defaults to checking its OpenSSL version (tests override). */
+  hybridTestable?: boolean;
+  /** GET for the sign-in setup check. null turns that check off (tests of other parts). */
+  http?: HttpGet | null;
+  /** Tool version for the User-Agent. */
+  version?: string;
 }
 
 /** Runs the website area: proves each domain, then checks only addresses under a proved domain. */
@@ -641,10 +661,15 @@ export async function runWeb(targets: string[], log: ActivityLog, o: WebOptions)
   const res = { ...emptyResult("web"), unproved: [] as string[], dnsFailed: [] as string[] };
   const fallback = o.fallbackLookup !== undefined ? o.fallbackLookup : o.lookup ? null : publicLookup();
   const parsed: WebTarget[] = [];
+  const paths = new Map<string, string[]>(); // label -> sign-in setup URLs the person listed
   for (const raw of targets.slice(0, MAX_WEB_TARGETS)) {
     const p = parseTarget(raw);
-    if ("error" in p) res.skipped.push({ target: raw, reason: p.error });
-    else if (!parsed.some((x) => x.label === p.label)) parsed.push(p);
+    if ("error" in p) {
+      res.skipped.push({ target: raw, reason: p.error });
+      continue;
+    }
+    if (p.path) paths.set(p.label, [...new Set([...(paths.get(p.label) ?? []), p.path])]);
+    if (!parsed.some((x) => x.label === p.label)) parsed.push(p);
   }
   if (targets.length > MAX_WEB_TARGETS) res.skipped.push({ target: `${targets.length - MAX_WEB_TARGETS} more`, reason: `at most ${MAX_WEB_TARGETS} addresses per run` });
 
@@ -678,7 +703,11 @@ export async function runWeb(targets: string[], log: ActivityLog, o: WebOptions)
       continue;
     }
     if (t.kind === "ssh") await checkSsh(t, log, res, o.ssh);
-    else await checkTls(t, log, res, o.handshake, o.gapMs, o.cipherProbe);
+    else {
+      await checkTls(t, log, res, o.handshake, o.gapMs, o.cipherProbe, o.hybridTestable);
+      // Sign-in setup, only on a site the TLS check reached.
+      if (res.checked.includes(t.label) && o.http !== null) await checkSignin(t, paths.get(t.label) ?? [], proved, log, res, o.http ?? httpGet(o.version ?? "dev"));
+    }
   }
   return res;
 }

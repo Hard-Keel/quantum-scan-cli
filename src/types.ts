@@ -1,5 +1,6 @@
 // Shared types for the Hard Keel quantum-readiness scanner.
 
+import type { InventoryItem } from "./inventory.ts";
 import type { PqcSignal } from "./pqc.ts";
 
 export type Risk =
@@ -40,4 +41,5 @@ export interface ScanResult {
   findings: Finding[];
   filesScanned: number;
   pqc: PqcSignal[]; // post-quantum encryption already in use, for the readiness score
+  inventory: InventoryItem[]; // every other algorithm in use (AES, SHA-2, ...), for the CBOM; never scored
 }

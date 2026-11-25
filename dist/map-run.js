@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { applyIgnore, applyIgnoreTargets, IGNORE_FILE, parseIgnore } from "./ignore.js";
 import { buildCbom } from "./cbom.js";
+import { buildMapSarif } from "./map-sarif.js";
 import { ActivityLog } from "./map-activity.js";
 import { CARDS, cardText } from "./map-areas.js";
 import { runHost } from "./map-host.js";
@@ -195,6 +196,7 @@ export async function runMap(o) {
     const results = [];
     const ignored = {};
     const pqcCounts = {};
+    const inventory = [];
     const cloudKeys = [];
     if (scope.areas.code) {
         const res = emptyResult("code");
@@ -205,7 +207,8 @@ export async function runMap(o) {
                 const walked = walkFolder(dir);
                 for (const u of walked.unreadable)
                     res.errors.push({ area: "code", target: `${folder}/${u.path}`.replace(/^\.\//, ""), kind: u.reason === "permission denied" ? "permission" : "read", message: `couldn't read (${u.reason})` });
-                const { findings, pqc, filesScanned } = scanFiles(walked.files);
+                const { findings, pqc, filesScanned, inventory: inv } = scanFiles(walked.files);
+                inventory.push(...inv);
                 for (const f of walked.files)
                     for (const a of cloudKeyAdvice(f.path, f.content))
                         cloudKeys.push({ ...a, target: `${folder}/${a.target}`.replace(/^\.\//, "") });
@@ -226,7 +229,7 @@ export async function runMap(o) {
     }
     if (scope.areas.web) {
         const token = scope.ownershipToken ?? o.settings.ownershipToken;
-        const res = await runWeb(scope.areas.web.targets, log, { ...o.web, token });
+        const res = await runWeb(scope.areas.web.targets, log, { version: o.version, ...o.web, token });
         results.push(res);
         if (res.unproved.length) {
             write("\nSome addresses were skipped because their domain isn't proved yet. To prove one, add this DNS record, then run again:\n");
@@ -261,9 +264,10 @@ export async function runMap(o) {
     const report = buildMapReport(results, ranked, o.version, new Date(), accepted, { cloudKeys, people: people ? { answeredAt: people.answeredAt, ...scorePeople(people.answers) } : null });
     writeFileSync(join(o.outDir, "map.json"), JSON.stringify(report, null, 2) + "\n");
     writeFileSync(join(o.outDir, "map.html"), mapHtml(report, log.entries));
-    writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }), null, 2) + "\n");
+    writeFileSync(join(o.outDir, "map.cbom.json"), JSON.stringify(buildCbom(ranked.map(toFinding), { repo: "encryption map", toolVersion: o.version }, inventory), null, 2) + "\n");
+    writeFileSync(join(o.outDir, "map.sarif.json"), JSON.stringify(buildMapSarif(ranked, o.version), null, 2) + "\n");
     const reportPath = resolve(o.outDir, "map.html");
-    process.stdout.write(mapText(report) + `\n\nYour report: ${reportPath}\nOpen it in a browser. For a PDF, choose Print, then Save as PDF.\nAlso wrote map.json, map.cbom.json and activity.log. They stay on this machine.\n`);
+    process.stdout.write(mapText(report) + `\n\nYour report: ${reportPath}\nOpen it in a browser. For a PDF, choose Print, then Save as PDF.\nAlso wrote map.json, map.cbom.json (CycloneDX inventory), map.sarif.json (SARIF findings) and activity.log. They stay on this machine.\n`);
     if (o.offerOpen ?? (o.interactive && Boolean(process.stdout.isTTY) && !process.env.CI)) {
         const p = (o.prompter ?? terminalPrompter)();
         try {

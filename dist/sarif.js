@@ -1,23 +1,64 @@
 // SARIF 2.1.0 output, so GitHub code scanning (and other tools) can show findings.
 import { shortLabel } from "./report.js";
+import { HELP_URI, fingerprints, securitySeverity, worstOf } from "./sarif-common.js";
 const LEVEL = {
     secret: "error",
     "weak-now": "error",
     "quantum-vulnerable": "warning",
     exposed: "error",
 };
-/** One SARIF rule per kind of problem, like "weak-now/md5" or "secret/aws-access-key". */
-function ruleId(f) {
-    const label = shortLabel(f).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    return `${f.risk}/${label}`;
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+/**
+ * One SARIF rule per kind of problem, like "weak-now/md5-hash" or "secret/aws-access-key". A setting
+ * is named by the setting itself, not by a label that can carry its value (such as the ports open),
+ * so the id stays the same from run to run.
+ */
+export function ruleId(f) {
+    return `${f.risk}/${slug(f.kind === "config" ? f.algorithm : shortLabel(f))}`;
 }
-export function buildSarif(findings, toolVersion) {
+function tags(f) {
+    const kind = f.kind === "secret" ? "secret" : f.kind === "config" ? "configuration" : "encryption";
+    return ["security", kind, f.risk, ...(f.risk === "quantum-vulnerable" ? ["post-quantum"] : [])];
+}
+function whenText(f) {
+    if (f.risk === "quantum-vulnerable")
+        return "Safe today, but a large quantum computer will be able to break it. NIST plans to phase it out between 2030 and 2035.";
+    if (f.risk === "secret")
+        return "Anyone who can read the repository can use it.";
+    return "Fix this now. It doesn't take a quantum computer to break.";
+}
+/** A scanner path as a URI from the repository root, when the scan ran on a folder inside the repository. */
+export function toUri(path, prefix = "") {
+    const clean = (s) => s.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/\/+$/, "");
+    const pre = clean(prefix);
+    const p = clean(path);
+    return encodeURI(pre && pre !== "." ? `${pre}/${p}` : p);
+}
+export function buildSarif(findings, toolVersion, opts = {}) {
+    const worst = new Map();
+    for (const f of findings)
+        worst.set(ruleId(f), worstOf(worst.get(ruleId(f)), f.severity));
     const rules = new Map();
     for (const f of findings) {
         const id = ruleId(f);
-        if (!rules.has(id))
-            rules.set(id, { id, name: shortLabel(f), shortDescription: { text: f.title }, help: { text: f.fix } });
+        if (rules.has(id))
+            continue;
+        const name = shortLabel(f);
+        const when = whenText(f);
+        rules.set(id, {
+            id,
+            name,
+            shortDescription: { text: f.title },
+            fullDescription: { text: `${f.title}. ${when}` },
+            help: { text: `${when} Fix: ${f.fix}`, markdown: `**${name}**\n\n${when}\n\n**Fix:** ${f.fix}\n\n[About Hard Keel Quantum Scan](${HELP_URI})` },
+            helpUri: HELP_URI,
+            defaultConfiguration: { level: LEVEL[f.risk] },
+            properties: { tags: tags(f), "security-severity": securitySeverity(f.risk, worst.get(id)) },
+        });
     }
+    const uri = (f) => toUri(f.file, opts.uriPrefix);
+    const ruleIndex = new Map([...rules.keys()].map((id, i) => [id, i]));
+    const prints = fingerprints(findings, (f) => `${ruleId(f)}|${uri(f)}`);
     return {
         $schema: "https://json.schemastore.org/sarif-2.1.0.json",
         version: "2.1.0",
@@ -27,15 +68,18 @@ export function buildSarif(findings, toolVersion) {
                     driver: {
                         name: "Hard Keel Quantum Scan",
                         version: toolVersion,
-                        informationUri: "https://hardkeel.com",
+                        informationUri: HELP_URI,
                         rules: [...rules.values()],
                     },
                 },
-                results: findings.map((f) => ({
+                results: findings.map((f, i) => ({
                     ruleId: ruleId(f),
+                    ruleIndex: ruleIndex.get(ruleId(f)),
                     level: LEVEL[f.risk],
                     message: { text: `${f.title}. ${f.fix}` },
-                    locations: [{ physicalLocation: { artifactLocation: { uri: f.file }, region: { startLine: f.line } } }],
+                    // SARIF lines start at 1; a finding about a whole file (line 0) points at the file alone.
+                    locations: [{ physicalLocation: { artifactLocation: { uri: uri(f), uriBaseId: "%SRCROOT%" }, ...(f.line > 0 ? { region: { startLine: f.line } } : {}) } }],
+                    partialFingerprints: prints[i],
                 })),
             },
         ],
