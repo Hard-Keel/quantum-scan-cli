@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - **Find forgotten hostnames.** `quantum-scan hosts example.com` lists the names under a domain from public certificate logs (crt.sh), so old APIs, staging sites and vendor portals on your domain don't get missed. One request to the public log; none of the hosts are contacted. Respects offline mode.
 - **Fairer grade on older Node.js.** If your Node.js can't offer ML-KEM (it needs OpenSSL 3.5 or later), a TLS 1.3 website is no longer marked down for "no quantum-safe option". The map lists it as not tested instead.
