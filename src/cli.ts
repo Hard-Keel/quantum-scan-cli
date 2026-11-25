@@ -23,7 +23,7 @@ import { ctDomain, hostsText, lookupCt, type CtFetch } from "./map-ct.ts";
 import { buildPayload, diffRuns, sendPayload, type Payload, type RunFacts } from "./share.ts";
 import { folderKey, INDUSTRIES, loadSettings, saveSettings, settingsPath, sharingState, showNoticeIfNeeded, SIZES, type FolderState, type Industry, type SharingReason, type Settings, type Size } from "./share-config.ts";
 
-export const VERSION = "0.3.2";
+export const VERSION = "0.4.0";
 const APP_URL = "https://github.com/apps/hard-keel-quantum-scan";
 
 const HELP = `Hard Keel Quantum Scan ${VERSION}

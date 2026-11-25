@@ -20,7 +20,7 @@ import { inventoryCounts } from "./inventory.js";
 import { ctDomain, hostsText, lookupCt } from "./map-ct.js";
 import { buildPayload, diffRuns, sendPayload } from "./share.js";
 import { folderKey, INDUSTRIES, loadSettings, saveSettings, settingsPath, sharingState, showNoticeIfNeeded, SIZES } from "./share-config.js";
-export const VERSION = "0.3.2";
+export const VERSION = "0.4.0";
 const APP_URL = "https://github.com/apps/hard-keel-quantum-scan";
 const HELP = `Hard Keel Quantum Scan ${VERSION}
 

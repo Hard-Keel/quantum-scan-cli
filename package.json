@@ -1,6 +1,6 @@
 {
   "name": "@hardkeel/quantum-scan",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Post-quantum readiness scanner: finds encryption quantum computers will break (RSA, ECC, DH), weak encryption, exposed infrastructure settings and leaked keys in code, config, websites, networks and servers. Writes a CycloneDX CBOM, SARIF and a NIST migration plan.",
   "license": "Apache-2.0",
   "author": "Hard Keel (https://hardkeel.com)",
